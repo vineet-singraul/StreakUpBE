@@ -1,0 +1,28 @@
+{
+  "name": "habit-tracker-backend",
+  "version": "1.0.0",
+  "description": "Habit Tracker API - Node/Express/MongoDB with Gemini AI reports, reminders and Google login",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "vapid": "web-push generate-vapid-keys"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@google/genai": "^2.31.0",
+    "compression": "^1.8.2",
+    "cors": "^2.8.6",
+    "dotenv": "^18.0.9",
+    "express": "^5.3.0",
+    "google-auth-library": "^11.3.1",
+    "jsonwebtoken": "^9.0.3",
+    "mongoose": "^9.11.4",
+    "node-cron": "^4.6.0",
+    "nodemailer": "^10.2.1",
+    "web-push": "^3.6.7"
+  }
+}
