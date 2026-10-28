@@ -32,7 +32,7 @@ export async function sendMail({ to, subject, html }) {
 const escape = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 function layout(title, body) {
-  const url = process.env.CLIENT_URL || 'http://localhost:5173';
+  const url = (process.env.CLIENT_URL || 'http://localhost:5173').split(',')[0].trim();
   return `<div style="font-family:Segoe UI,Arial,sans-serif;max-width:560px;margin:auto;padding:24px;background:#f6f7fb">
   <div style="background:#fff;border-radius:12px;padding:24px;border:1px solid #e6e8f0">
     <h2 style="margin:0 0 12px;color:#4f46e5">${escape(title)}</h2>
