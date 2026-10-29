@@ -79,7 +79,7 @@ Keep it under 180 words and motivating, not preachy.`;
 
 export function reasonsFeedback({ name, date, items }) {
   const lines = items.map((i) => `- ${i.title}: ${i.reason || '(no reason given)'}`).join('\n');
-  const fallback = 'Reasons save ho gaye. Kal in tasks ko chhote steps me todkar subah hi shuru karo, aur 2-2 ghante wale reminders pe dhyan do.';
+  const fallback = 'Reasons save ho gaye. Kal in tasks ko chhote steps me todkar subah hi shuru karo, aur har ghante wale reminders pe dhyan do.';
 
   const prompt = `You are a supportive productivity coach in a habit tracker app.
 ${name} could not complete these tasks on ${prettyDate(date)}, with their reasons:

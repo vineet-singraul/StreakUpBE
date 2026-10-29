@@ -37,7 +37,7 @@ export async function runMidnightReports(date = yesterdayStr()) {
   }
 }
 
-/** Every 2 hours: remind users who still have pending tasks today */
+/** Every hour: remind users who still have pending tasks today */
 export async function runReminders(onlyUserId = null) {
   const date = todayStr();
   const match = { date };
@@ -85,7 +85,7 @@ export async function runReminders(onlyUserId = null) {
 export function startScheduler() {
   const timezone = process.env.APP_TIMEZONE || 'Asia/Kolkata';
   const reportCron = process.env.REPORT_CRON || '0 0 * * *';
-  const reminderCron = process.env.REMINDER_CRON || '0 8-22/2 * * *';
+  const reminderCron = process.env.REMINDER_CRON || '0 8-22 * * *';
 
   cron.schedule(reportCron, () => runMidnightReports().catch(console.error), { timezone });
   cron.schedule(reminderCron, () => runReminders().catch(console.error), { timezone });
