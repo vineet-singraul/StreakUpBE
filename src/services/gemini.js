@@ -6,9 +6,13 @@ let client = null;
 function getClient() {
   const key = process.env.GEMINI_API_KEY;
   if (!key || key.startsWith('PASTE_')) return null;
-  if (!client) client = new GoogleGenAI({ apiKey: key });
+  // Never let a slow/overloaded model hang a request or the midnight job
+  if (!client) client = new GoogleGenAI({ apiKey: key, httpOptions: { timeout: 60000 } });
   return client;
 }
+
+// GEMINI_MODEL may list fallbacks: "gemini-3.5-flash-lite,gemini-3.8-flash"
+const models = () => (process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite').split(',').map((m) => m.trim()).filter(Boolean);
 
 export function isGeminiConfigured() {
   return Boolean(getClient());
@@ -17,16 +21,16 @@ export function isGeminiConfigured() {
 async function ask(prompt, fallback) {
   const ai = getClient();
   if (!ai) return fallback;
-  try {
-    const res = await ai.models.generateContent({
-      model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
-      contents: prompt,
-    });
-    return res.text?.trim() || fallback;
-  } catch (err) {
-    console.error('Gemini error:', err.message);
-    return fallback;
+  for (const model of models()) {
+    try {
+      const res = await ai.models.generateContent({ model, contents: prompt });
+      const text = res.text?.trim();
+      if (text) return text;
+    } catch (err) {
+      console.error(`Gemini error (${model}):`, err.status || '', String(err.message).slice(0, 200));
+    }
   }
+  return fallback;
 }
 
 const lang = () => process.env.REPORT_LANGUAGE || 'Hinglish';

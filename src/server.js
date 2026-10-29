@@ -14,6 +14,7 @@ import habitRoutes from './routes/habits.js';
 import reportRoutes from './routes/reports.js';
 import notificationRoutes from './routes/notifications.js';
 import { startScheduler } from './services/scheduler.js';
+import { isGeminiConfigured } from './services/gemini.js';
 
 const app = express();
 
@@ -29,7 +30,11 @@ app.use('/api', (req, res, next) => {
 });
 
 app.get('/api/health', (req, res) => {
-  res.json({ ok: true, db: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected' });
+  res.json({
+    ok: true,
+    db: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+    ai: isGeminiConfigured() ? 'gemini ready' : 'GEMINI_API_KEY missing',
+  });
 });
 
 // aggregate() needs an ObjectId, so expose it alongside req.userId
