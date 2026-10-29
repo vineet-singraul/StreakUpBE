@@ -41,8 +41,16 @@ router.post('/test', async (req, res) => {
 
 // Sends the "pending tasks" reminder (push + email) to yourself right now
 router.post('/remind-now', async (req, res) => {
-  const count = await runReminders(req.user._id);
-  res.json({ sent: count > 0, message: count ? 'Reminder bhej diya (push + email)' : 'Aaj koi pending task nahi hai' });
+  const { users, pushed, mailed } = await runReminders(req.user._id);
+  if (!users) return res.json({ sent: false, message: 'Aaj koi pending task nahi hai' });
+
+  const channels = [mailed && 'email', pushed && 'browser notification'].filter(Boolean);
+  res.json({
+    sent: channels.length > 0,
+    message: channels.length
+      ? `Reminder bhej diya (${channels.join(' + ')})`
+      : 'Email nahi gaya aur browser notifications ON nahi hain. Upar "Enable" dabao.',
+  });
 });
 
 export default router;

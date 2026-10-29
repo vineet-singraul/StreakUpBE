@@ -19,6 +19,7 @@ export async function runMidnightReports(date = yesterdayStr()) {
       if (!report) continue;
 
       const dateLabel = prettyDate(date);
+      // The report is always pushed too, so it still reaches the user if the email fails
       await sendMail({
         to: user.email,
         subject: `📊 Daily Report ${dateLabel}: ${report.completedCount}/${report.total} done`,
@@ -57,29 +58,39 @@ export async function runReminders(onlyUserId = null) {
 
   console.log(`[reminder] ${date}: ${groups.length} user(s) with pending tasks`);
 
+  const stats = { users: groups.length, pushed: 0, mailed: 0, fallbackPushed: 0 };
   for (const g of groups) {
     try {
       const user = await User.findById(g._id);
       if (!user) continue;
-      if (user.pushReminders) {
-        await sendPush(user, {
-          title: `⏰ ${g.pending.length} task pending hai!`,
-          body: g.pending.slice(0, 3).join(', ') + (g.pending.length > 3 ? '...' : ''),
-          url: `/day/${date}`,
-        });
-      }
-      if (user.emailReminders) {
-        await sendMail({
+      const payload = {
+        title: `⏰ ${g.pending.length} task pending hai!`,
+        body: g.pending.slice(0, 3).join(', ') + (g.pending.length > 3 ? '...' : ''),
+        url: `/day/${date}`,
+      };
+
+      let pushed = user.pushReminders ? await sendPush(user, payload) : 0;
+      const mailed = user.emailReminders
+        ? await sendMail({
           to: user.email,
           subject: `⏰ Reminder: ${g.pending.length} task(s) abhi baaki hain`,
           html: reminderEmail({ name: user.name.split(' ')[0], pending: g.pending, done: g.done, total: g.total }),
-        });
+        })
+        : false;
+
+      // Email failed (or is off) and nothing reached the user yet: browser notification is the fallback
+      if (!mailed && !pushed) {
+        pushed = await sendPush(user, payload);
+        if (pushed) stats.fallbackPushed += 1;
       }
+      if (pushed) stats.pushed += 1;
+      if (mailed) stats.mailed += 1;
     } catch (err) {
       console.error('[reminder] failed for user', String(g._id), err.message);
     }
   }
-  return groups.length;
+  console.log(`[reminder] push=${stats.pushed} email=${stats.mailed} fallback-push=${stats.fallbackPushed}`);
+  return stats;
 }
 
 export function startScheduler() {
