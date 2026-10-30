@@ -71,6 +71,15 @@ export async function runReminders(onlyUserId = null) {
       await sendPush(user, { title: '📝 Aaj ke tasks add karo', body: 'Abhi tak aaj ka koi task nahi hai. 1 minute me plan likh lo!', url: '/day/today' }).catch(() => {});
     }
     if (noTasks.length) console.log(`[reminder] nudged ${noTasks.length} user(s) without tasks`);
+
+    // Everything done today: keep notifying, with a cheer + prompt to add the next task
+    const allDone = [...byUser.values()].filter((g) => !g.pending.length);
+    for (const g of allDone) {
+      const user = await User.findById(g._id);
+      if (!user?.pushReminders) continue;
+      await sendPush(user, { title: `🎉 ${g.done}/${g.total} tasks done!`, body: 'Shabash! Aaj ke saare tasks poore. Kuch aur karna hai to naya task add karo.', url: '/day/today' }).catch(() => {});
+    }
+    if (allDone.length) console.log(`[reminder] cheered ${allDone.length} user(s) with all tasks done`);
   }
 
   console.log(`[reminder] ${date}: ${groups.length} user(s) with pending tasks`);
