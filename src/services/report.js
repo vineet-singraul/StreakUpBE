@@ -20,7 +20,7 @@ export async function dailyStats(userId, end, count) {
 export async function buildDailyReport(userId, date, { final = false } = {}) {
   const [tasks, user] = await Promise.all([
     Task.find({ user: userId, date }).sort({ createdAt: 1 }).lean(),
-    User.findById(userId).select('name').lean(),
+    User.findById(userId).select('name language').lean(),
   ]);
   if (!tasks.length) return null;
 
@@ -33,6 +33,7 @@ export async function buildDailyReport(userId, date, { final = false } = {}) {
     completed: done.map((t) => t.title),
     pending: pending.map((t) => t.title),
     final,
+    language: user?.language,
   });
 
   return Report.findOneAndUpdate(

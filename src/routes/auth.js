@@ -63,6 +63,7 @@ router.patch('/settings', requireAuth, async (req, res) => {
   for (const key of ['emailReminders', 'pushReminders']) {
     if (typeof req.body?.[key] === 'boolean') user[key] = req.body[key];
   }
+  if (['en', 'hi', 'hinglish'].includes(req.body?.language)) user.language = req.body.language;
   await user.save();
   res.json({ user: user.toPublic() });
 });

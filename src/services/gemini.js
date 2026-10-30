@@ -33,10 +33,17 @@ async function ask(prompt, fallback) {
   return fallback;
 }
 
-const lang = () => process.env.REPORT_LANGUAGE || 'Hinglish';
+const LANGUAGE_NAMES = {
+  en: 'simple English',
+  hi: 'Hindi (Devanagari script)',
+  hinglish: 'Hinglish (Hindi written in Roman script, mixed with English)',
+};
+// Per-user language; REPORT_LANGUAGE is only the fallback for users who never picked one
+const langName = (code) => LANGUAGE_NAMES[code] || process.env.REPORT_LANGUAGE || 'Hinglish';
 const bullet = (items) => (items.length ? items.map((t) => `- ${t}`).join('\n') : '- (none)');
 
-export function dailySummary({ name, date, completed, pending, final }) {
+export function dailySummary({ name, date, completed, pending, final, language }) {
+  const lang = () => langName(language);
   const total = completed.length + pending.length;
   const pct = total ? Math.round((completed.length / total) * 100) : 0;
 
@@ -77,7 +84,8 @@ Keep it under 180 words and motivating, not preachy.`;
   return ask(prompt, fallback);
 }
 
-export function reasonsFeedback({ name, date, items }) {
+export function reasonsFeedback({ name, date, items, language }) {
+  const lang = () => langName(language);
   const lines = items.map((i) => `- ${i.title}: ${i.reason || '(no reason given)'}`).join('\n');
   const fallback = 'Reasons save ho gaye. Kal in tasks ko chhote steps me todkar subah hi shuru karo, aur har ghante wale reminders pe dhyan do.';
 

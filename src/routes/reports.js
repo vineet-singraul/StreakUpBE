@@ -51,11 +51,12 @@ router.post('/:id/reasons', async (req, res) => {
     if (typeof r === 'string') p.reason = r.trim().slice(0, 500);
   }
 
-  const user = await User.findById(req.userId).select('name').lean();
+  const user = await User.findById(req.userId).select('name language').lean();
   report.aiFeedback = await reasonsFeedback({
     name: user?.name?.split(' ')[0] || 'Friend',
     date: report.date,
     items: report.pending.map((p) => ({ title: p.title, reason: p.reason })),
+    language: user?.language,
   });
   report.reasonsSubmitted = true;
   await report.save();
