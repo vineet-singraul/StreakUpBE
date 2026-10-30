@@ -16,6 +16,7 @@ import notificationRoutes from './routes/notifications.js';
 import challengeRoutes from './routes/challenge.js';
 import { startScheduler } from './services/scheduler.js';
 import { isGeminiConfigured } from './services/gemini.js';
+import { checkMail, mailStatus } from './services/mailer.js';
 
 const app = express();
 
@@ -35,6 +36,9 @@ app.get('/api/health', (req, res) => {
     ok: true,
     db: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
     ai: isGeminiConfigured() ? 'gemini ready' : 'GEMINI_API_KEY missing',
+    mail: mailStatus,
+    push: process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY ? 'ready' : 'VAPID keys missing',
+    timezone: process.env.APP_TIMEZONE || 'Asia/Kolkata',
   });
 });
 
@@ -79,6 +83,7 @@ connectDB()
     app.listen(PORT, () => console.log(`API running on http://localhost:${PORT}`));
     startScheduler();
     startKeepAlive();
+    checkMail();
   })
   .catch((err) => {
     console.error('Could not connect to MongoDB:', err.message);

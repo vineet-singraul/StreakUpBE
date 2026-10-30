@@ -2,23 +2,27 @@ import cron from 'node-cron';
 import Task from '../models/Task.js';
 import User from '../models/User.js';
 import { buildDailyReport, dailyStats } from './report.js';
-import { sendMail, reminderEmail, reportEmail } from './mailer.js';
+import { sendMail, reminderEmail, reportEmail, noTasksEmail } from './mailer.js';
 import { sendPush } from './push.js';
 import { todayStr, yesterdayStr, prettyDate } from '../utils/date.js';
 
 /** 12 AM: final report for the day that just ended, emailed + pushed, asks for reasons */
 export async function runMidnightReports(date = yesterdayStr()) {
-  const userIds = await Task.distinct('user', { date });
-  console.log(`[report] ${date}: generating for ${userIds.length} user(s)`);
+  // Every user gets the 12 AM mail; those without tasks get a short "add tasks today" note
+  const users = await User.find({});
+  console.log(`[report] ${date}: sending to ${users.length} user(s)`);
 
-  for (const userId of userIds) {
+  for (const user of users) {
+    const userId = user._id;
     try {
-      const user = await User.findById(userId);
-      if (!user) continue;
       const report = await buildDailyReport(userId, date, { final: true });
-      if (!report) continue;
-
       const dateLabel = prettyDate(date);
+      if (!report) {
+        await sendMail({ to: user.email, subject: `📊 ${dateLabel}: koi task nahi tha`, html: noTasksEmail({ name: user.name, dateLabel }) });
+        await sendPush(user, { title: '📝 Aaj ke tasks add karo', body: 'Kal koi task nahi tha. Aaj ka plan abhi likh lo!', url: '/day/today' });
+        continue;
+      }
+
       const week = await dailyStats(userId, date, 7);
       // The report is always pushed too, so it still reaches the user if the email fails
       await sendMail({
@@ -56,6 +60,15 @@ export async function runReminders(onlyUserId = null) {
     else g.pending.push(t.title);
   }
   const groups = [...byUser.values()].filter((g) => g.pending.length);
+
+  // Users who haven't added anything today get a push nudge (no email, to avoid hourly spam)
+  if (!onlyUserId) {
+    const noTasks = await User.find({ _id: { $nin: [...byUser.values()].map((g) => g._id) }, pushReminders: true, 'pushSubscriptions.0': { $exists: true } });
+    for (const user of noTasks) {
+      await sendPush(user, { title: '📝 Aaj ke tasks add karo', body: 'Abhi tak aaj ka koi task nahi hai. 1 minute me plan likh lo!', url: '/day/today' }).catch(() => {});
+    }
+    if (noTasks.length) console.log(`[reminder] nudged ${noTasks.length} user(s) without tasks`);
+  }
 
   console.log(`[reminder] ${date}: ${groups.length} user(s) with pending tasks`);
 

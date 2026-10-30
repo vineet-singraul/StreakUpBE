@@ -18,6 +18,21 @@ function getTransporter() {
   return transporter;
 }
 
+// Checked once at startup so /api/health shows whether this host can reach Gmail (some block SMTP)
+export let mailStatus = 'not checked';
+export async function checkMail() {
+  const t = getTransporter();
+  if (!t) return (mailStatus = 'GMAIL_USER / GMAIL_APP_PASSWORD missing');
+  try {
+    await t.verify();
+    mailStatus = 'ok';
+  } catch (err) {
+    mailStatus = `failed: ${err.code || err.message}`;
+  }
+  console.log('Gmail SMTP:', mailStatus);
+  return mailStatus;
+}
+
 export async function sendMail({ to, subject, html }) {
   const t = getTransporter();
   if (!t) {
@@ -84,6 +99,14 @@ function weekChart(days) {
       <tr>${cols}</tr>
     </table>
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>${labels}</tr></table>`;
+}
+
+export function noTasksEmail({ name, dateLabel }) {
+  return layout(
+    `${dateLabel}: koi task nahi tha`,
+    `<p>Hi ${escape(name)}, kal aapne koi task add nahi kiya tha, isliye report khaali hai.</p>
+     <p>Aaj subah hi apne tasks likh lo. Har ghante reminder aayega aur raat 12 baje AI report banegi 💪</p>`,
+  );
 }
 
 export function reportEmail({ name, dateLabel, report, week }) {
