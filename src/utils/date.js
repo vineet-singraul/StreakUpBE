@@ -66,6 +66,17 @@ export function listCalendarMonths() {
   return months;
 }
 
+/** YYYY-MM-DD shifted by n days (pure calendar math, no timezone drift) */
+export function addDays(date, n) {
+  const [y, m, d] = date.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
+}
+
+/** The `count` dates ending at `end` (inclusive), oldest first */
+export function lastNDays(end, count) {
+  return Array.from({ length: count }, (_, i) => addDays(end, i - count + 1));
+}
+
 export function prettyDate(date) {
   const [y, m, d] = date.split('-').map(Number);
   return `${d} ${MONTH_NAMES[m - 1]} ${y}`;

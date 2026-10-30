@@ -1,7 +1,7 @@
 import cron from 'node-cron';
 import Task from '../models/Task.js';
 import User from '../models/User.js';
-import { buildDailyReport } from './report.js';
+import { buildDailyReport, dailyStats } from './report.js';
 import { sendMail, reminderEmail, reportEmail } from './mailer.js';
 import { sendPush } from './push.js';
 import { todayStr, yesterdayStr, prettyDate } from '../utils/date.js';
@@ -19,11 +19,12 @@ export async function runMidnightReports(date = yesterdayStr()) {
       if (!report) continue;
 
       const dateLabel = prettyDate(date);
+      const week = await dailyStats(userId, date, 7);
       // The report is always pushed too, so it still reaches the user if the email fails
       await sendMail({
         to: user.email,
         subject: `📊 Daily Report ${dateLabel}: ${report.completedCount}/${report.total} done`,
-        html: reportEmail({ name: user.name, dateLabel, report }),
+        html: reportEmail({ name: user.name, dateLabel, report, week }),
       });
       await sendPush(user, {
         title: `Daily Report: ${report.completedCount}/${report.total} done`,

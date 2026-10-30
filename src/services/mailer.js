@@ -56,7 +56,37 @@ export function reminderEmail({ name, pending, done, total }) {
   );
 }
 
-export function reportEmail({ name, dateLabel, report }) {
+const WEEKDAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+/** Completion % per day as an email-safe (table based) column chart */
+function weekChart(days) {
+  if (!days?.length) return '';
+  const H = 110;
+  const cols = days
+    .map((d) => {
+      const pct = d.total ? Math.round((d.done / d.total) * 100) : null;
+      const barH = pct === null ? 0 : Math.max(Math.round((pct / 100) * H), 3);
+      return `<td valign="bottom" align="center" style="padding:0 4px;width:${Math.floor(100 / days.length)}%">
+        <div style="font-size:11px;color:#52514e;margin-bottom:4px">${pct === null ? '–' : `${pct}%`}</div>
+        <div style="height:${barH}px;width:22px;max-width:100%;background:#4f46e5;border-radius:4px 4px 0 0;margin:0 auto"></div>
+      </td>`;
+    })
+    .join('');
+  const labels = days
+    .map((d) => {
+      const [y, m, day] = d.date.split('-').map(Number);
+      const wd = WEEKDAY[new Date(Date.UTC(y, m - 1, day)).getUTCDay()];
+      return `<td align="center" style="font-size:11px;color:#52514e;padding-top:6px">${wd}<br>${day}</td>`;
+    })
+    .join('');
+  return `<h4 style="margin:20px 0 8px">📊 Last 7 days: task completion</h4>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-bottom:1px solid #e6e8f0;height:${H + 24}px">
+      <tr>${cols}</tr>
+    </table>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>${labels}</tr></table>`;
+}
+
+export function reportEmail({ name, dateLabel, report, week }) {
   const askReasons = report.pending.length
     ? `<p style="color:#b45309"><b>Ye tasks kyon nahi ho paaye?</b> App kholkar reason batao, AI aapko kal ke liye plan dega.</p>`
     : '';
@@ -67,6 +97,7 @@ export function reportEmail({ name, dateLabel, report }) {
      <h4 style="margin-bottom:4px">❌ Pending</h4>${list(report.pending.length ? report.pending.map((p) => p.title) : ['(none)'])}
      <h4 style="margin-bottom:4px">🤖 AI Report</h4>
      <div style="white-space:pre-wrap;background:#f3f4ff;padding:12px;border-radius:8px">${escape(report.aiSummary)}</div>
+     ${weekChart(week)}
      ${askReasons}`,
   );
 }

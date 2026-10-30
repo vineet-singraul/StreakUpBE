@@ -2,6 +2,7 @@ import { Router } from 'express';
 import Task from '../models/Task.js';
 import Report from '../models/Report.js';
 import { DATE_RE, MONTH_RE, todayStr, isMonthUnlocked } from '../utils/date.js';
+import { dailyStats } from '../services/report.js';
 
 const router = Router();
 
@@ -24,6 +25,12 @@ router.get('/month', async (req, res) => {
     { $project: { _id: 0, date: '$_id', total: 1, done: 1 } },
   ]);
   res.json({ month, days });
+});
+
+// Per-day totals for the last N days (bar chart on the Reports page)
+router.get('/stats', async (req, res) => {
+  const days = Math.min(Math.max(Number(req.query.days) || 30, 7), 90);
+  res.json({ today: todayStr(), days: await dailyStats(req.userId, todayStr(), days) });
 });
 
 // Tasks + that day's report in one request (both queries run in parallel)
