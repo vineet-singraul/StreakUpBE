@@ -8,6 +8,7 @@ const challengeSchema = new mongoose.Schema(
     startDate: { type: String, required: true },
     days: { type: Number, default: 30 },
     active: { type: Boolean, default: true },
+    endedAt: String, // YYYY-MM-DD when it was ended early or replaced
     items: [
       {
         name: { type: String, required: true, trim: true, maxlength: 80 },

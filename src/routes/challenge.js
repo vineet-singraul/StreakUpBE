@@ -14,7 +14,8 @@ function dayOf(challenge, date = todayStr()) {
 }
 
 function withStats(c) {
-  const today = Math.min(dayOf(c), c.days + 1);
+  // An ended challenge is frozen on the day it was ended
+  const today = Math.min(dayOf(c, c.active ? todayStr() : c.endedAt || todayStr()), c.days + 1);
   let points = 0;
   let perfectDays = 0;
   for (let d = 1; d <= Math.min(today, c.days); d += 1) {
@@ -42,9 +43,50 @@ router.post('/', async (req, res) => {
     .slice(0, 20);
   if (!items.length) return res.status(400).json({ message: 'Add at least one challenge rule' });
 
-  await Challenge.updateMany({ user: req.userId, active: true }, { $set: { active: false } });
+  await Challenge.updateMany({ user: req.userId, active: true }, { $set: { active: false, endedAt: todayStr() } });
   const c = await Challenge.create({ user: req.userId, title, startDate: todayStr(), items: items.map((name) => ({ name })) });
   res.status(201).json({ challenge: withStats(c.toObject()) });
+});
+
+// Edit the running challenge: title, rename / add / remove rules (ticks of kept rules stay)
+router.patch('/', async (req, res) => {
+  const c = await Challenge.findOne({ user: req.userId, active: true }).sort({ createdAt: -1 });
+  if (!c) return res.status(404).json({ message: 'Challenge not found' });
+
+  const title = String(req.body?.title || '').trim();
+  if (title) c.title = title.slice(0, 80);
+
+  if (Array.isArray(req.body?.items)) {
+    const incoming = req.body.items
+      .map((i) => ({ _id: i?._id, name: String(i?.name || '').trim().slice(0, 80) }))
+      .filter((i) => i.name)
+      .slice(0, 20);
+    if (!incoming.length) return res.status(400).json({ message: 'Add at least one challenge rule' });
+    c.items = incoming.map((i) => {
+      const old = i._id && c.items.id(i._id);
+      return old ? { _id: old._id, name: i.name, doneDays: old.doneDays } : { name: i.name, doneDays: [] };
+    });
+  }
+  await c.save();
+  res.json({ challenge: withStats(c.toObject()) });
+});
+
+// All past + current challenges, newest first (History list)
+router.get('/history', async (req, res) => {
+  const list = await Challenge.find({ user: req.userId }).sort({ createdAt: -1 }).limit(50).lean();
+  res.json({
+    challenges: list.map((c) => {
+      const s = withStats(c);
+      return { _id: c._id, title: c.title, startDate: c.startDate, endedAt: c.endedAt, active: c.active, days: c.days, rules: c.items.length, points: s.points, perfectDays: s.perfectDays, dayReached: Math.min(s.today, c.days), finished: s.finished };
+    }),
+  });
+});
+
+// One challenge with its full grid (read-only view from History)
+router.get('/:id', async (req, res) => {
+  const c = await Challenge.findOne({ _id: req.params.id, user: req.userId }).lean();
+  if (!c) return res.status(404).json({ message: 'Challenge not found' });
+  res.json({ challenge: withStats(c) });
 });
 
 // Tick / untick today's box for one rule
@@ -63,7 +105,7 @@ router.patch('/items/:itemId/toggle', async (req, res) => {
 });
 
 router.delete('/', async (req, res) => {
-  await Challenge.updateMany({ user: req.userId, active: true }, { $set: { active: false } });
+  await Challenge.updateMany({ user: req.userId, active: true }, { $set: { active: false, endedAt: todayStr() } });
   res.json({ ok: true });
 });
 
