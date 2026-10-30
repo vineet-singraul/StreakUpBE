@@ -21,6 +21,7 @@ function getTransporter() {
 // Checked once at startup so /api/health shows whether this host can reach Gmail (some block SMTP)
 export let mailStatus = 'not checked';
 export async function checkMail() {
+  if (process.env.BREVO_API_KEY) return (mailStatus = 'ok (brevo api)');
   const t = getTransporter();
   if (!t) return (mailStatus = 'GMAIL_USER / GMAIL_APP_PASSWORD missing');
   try {
@@ -33,7 +34,30 @@ export async function checkMail() {
   return mailStatus;
 }
 
+async function sendViaBrevo({ to, subject, html }) {
+  const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: { 'api-key': process.env.BREVO_API_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      sender: { name: 'Habit Tracker', email: process.env.MAIL_FROM || process.env.GMAIL_USER },
+      to: [{ email: to }],
+      subject,
+      htmlContent: html,
+    }),
+  });
+  if (!res.ok) throw new Error(`Brevo ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  return true;
+}
+
 export async function sendMail({ to, subject, html }) {
+  if (process.env.BREVO_API_KEY) {
+    try {
+      return await sendViaBrevo({ to, subject, html });
+    } catch (err) {
+      console.error('Email send failed:', err.message);
+      return false;
+    }
+  }
   const t = getTransporter();
   if (!t) {
     console.warn('Gmail not configured, skipping email to', to);
