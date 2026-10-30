@@ -13,6 +13,7 @@ import taskRoutes from './routes/tasks.js';
 import habitRoutes from './routes/habits.js';
 import reportRoutes from './routes/reports.js';
 import notificationRoutes from './routes/notifications.js';
+import challengeRoutes from './routes/challenge.js';
 import { startScheduler } from './services/scheduler.js';
 import { isGeminiConfigured } from './services/gemini.js';
 
@@ -49,6 +50,7 @@ app.use('/api/tasks', withUser, taskRoutes);
 app.use('/api/habits', withUser, habitRoutes);
 app.use('/api/reports', withUser, reportRoutes);
 app.use('/api/notifications', withUser, notificationRoutes);
+app.use('/api/challenge', withUser, challengeRoutes);
 
 app.use((req, res) => res.status(404).json({ message: 'Route not found' }));
 
@@ -61,10 +63,22 @@ app.use((err, req, res, next) => {
 
 const PORT = process.env.PORT || 5000;
 
+// Render's free plan sleeps after 15 min without traffic (first request then takes ~30-50s,
+// and cron reminders/reports don't run). Pinging our own public URL every 10 min keeps it awake.
+// RENDER_EXTERNAL_URL is set automatically by Render; KEEP_ALIVE_URL overrides; locally it's off.
+function startKeepAlive() {
+  const base = process.env.KEEP_ALIVE_URL || process.env.RENDER_EXTERNAL_URL;
+  if (!base) return;
+  const url = `${base.replace(/\/$/, '')}/api/health`;
+  setInterval(() => fetch(url).catch(() => {}), 10 * 60 * 1000);
+  console.log(`Keep-alive ping every 10 min -> ${url}`);
+}
+
 connectDB()
   .then(() => {
     app.listen(PORT, () => console.log(`API running on http://localhost:${PORT}`));
     startScheduler();
+    startKeepAlive();
   })
   .catch((err) => {
     console.error('Could not connect to MongoDB:', err.message);
