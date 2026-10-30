@@ -9,6 +9,9 @@ import { todayStr, yesterdayStr, prettyDate } from '../utils/date.js';
 // Reminders may run every minute; emails still go out only on the hour (and on manual tests)
 const onTheHour = () => new Date().getUTCMinutes() === 30; // IST is UTC+5:30, so IST :00 == UTC :30
 
+// Shown in /api/health so we can see the jobs are actually firing on the server
+export const schedulerInfo = { reminderCron: null, lastReminder: null };
+
 /** 12 AM: final report for the day that just ended, emailed + pushed, asks for reasons */
 export async function runMidnightReports(date = yesterdayStr()) {
   // Every user gets the 12 AM mail; those without tasks get a short "add tasks today" note
@@ -122,10 +125,21 @@ export async function runReminders(onlyUserId = null) {
 export function startScheduler() {
   const timezone = process.env.APP_TIMEZONE || 'Asia/Kolkata';
   const reportCron = process.env.REPORT_CRON || '0 0 * * *';
-  const reminderCron = process.env.REMINDER_CRON || '* * * * *';
+  // TEST MODE: every minute, ignoring REMINDER_CRON (Render still has the old hourly value).
+  // Switch back later with: const reminderCron = process.env.REMINDER_CRON || '0 8-22 * * *';
+  const reminderCron = '* * * * *';
+  schedulerInfo.reminderCron = reminderCron;
 
   cron.schedule(reportCron, () => runMidnightReports().catch(console.error), { timezone });
-  cron.schedule(reminderCron, () => runReminders().catch(console.error), { timezone });
+  cron.schedule(reminderCron, async () => {
+    try {
+      const stats = await runReminders();
+      schedulerInfo.lastReminder = { at: new Date().toISOString(), ...stats };
+    } catch (err) {
+      schedulerInfo.lastReminder = { at: new Date().toISOString(), error: err.message };
+      console.error(err);
+    }
+  }, { timezone });
 
   console.log(`Scheduler started (${timezone}) report="${reportCron}" reminders="${reminderCron}"`);
 }
