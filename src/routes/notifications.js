@@ -53,4 +53,26 @@ router.post('/remind-now', async (req, res) => {
   });
 });
 
+// App Blocker: the server sends "time's up" as a push, so it arrives even while the user is inside Instagram
+const timers = new Map(); // userId -> timeout
+router.post('/timer', (req, res) => {
+  const seconds = Math.round(Number(req.body?.seconds));
+  if (!Number.isFinite(seconds) || seconds < 1 || seconds > 6 * 3600) return res.status(400).json({ message: 'Invalid time' });
+  const id = String(req.userId);
+  clearTimeout(timers.get(id));
+  const payload = { title: String(req.body?.title || "⏰ Time's up").slice(0, 60), body: String(req.body?.body || '').slice(0, 140), url: '/blocker' };
+  timers.set(id, setTimeout(async () => {
+    timers.delete(id);
+    const user = await User.findById(id).catch(() => null);
+    if (user) sendPush(user, payload).catch(() => {});
+  }, seconds * 1000));
+  res.json({ ok: true });
+});
+
+router.delete('/timer', (req, res) => {
+  clearTimeout(timers.get(String(req.userId)));
+  timers.delete(String(req.userId));
+  res.json({ ok: true });
+});
+
 export default router;
