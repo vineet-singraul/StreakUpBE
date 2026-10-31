@@ -8,6 +8,7 @@ const POINTS_PER_TICK = 10;
 const PERFECT_DAY_BONUS = 20;
 const MIN_DAYS = 10;
 const MAX_DAYS = 90;
+const MAX_RUNNING = 10;
 
 // Day number of `date` inside the challenge (1-based)
 function dayOf(challenge, date = todayStr()) {
@@ -31,12 +32,17 @@ function withStats(c) {
   return { ...c, today, points, perfectDays, finished: today > c.days };
 }
 
+// Several challenges can run side by side; finished ones drop out (they show as Completed in History)
+const runningFor = async (userId) => (await Challenge.find({ user: userId, active: true }).sort({ createdAt: 1 }).lean())
+  .map(withStats)
+  .filter((c) => !c.finished);
+
 router.get('/', async (req, res) => {
-  const c = await Challenge.findOne({ user: req.userId, active: true }).sort({ createdAt: -1 }).lean();
-  res.json({ challenge: c ? withStats(c) : null, rules: { perTick: POINTS_PER_TICK, perfectBonus: PERFECT_DAY_BONUS } });
+  const challenges = await runningFor(req.userId);
+  res.json({ challenges, challenge: challenges.at(-1) || null, rules: { perTick: POINTS_PER_TICK, perfectBonus: PERFECT_DAY_BONUS } });
 });
 
-// Start a new challenge today (ends any running one)
+// Start a new challenge today; challenges already running keep going
 router.post('/', async (req, res) => {
   const title = String(req.body?.title || '').trim().slice(0, 80);
   if (!title) return res.status(400).json({ message: 'Challenge title is required' });
@@ -50,14 +56,18 @@ router.post('/', async (req, res) => {
     .slice(0, 20);
   if (!items.length) return res.status(400).json({ message: 'Add at least one challenge rule' });
 
-  await Challenge.updateMany({ user: req.userId, active: true }, { $set: { active: false, endedAt: todayStr() } });
+  if ((await runningFor(req.userId)).length >= MAX_RUNNING) {
+    return res.status(400).json({ message: `Max ${MAX_RUNNING} challenges can run at once` });
+  }
   const c = await Challenge.create({ user: req.userId, title, days, startDate: todayStr(), items: items.map((name) => ({ name })) });
   res.status(201).json({ challenge: withStats(c.toObject()) });
 });
 
-// Edit the running challenge: title, rename / add / remove rules (ticks of kept rules stay)
-router.patch('/', async (req, res) => {
-  const c = await Challenge.findOne({ user: req.userId, active: true }).sort({ createdAt: -1 });
+// Edit a running challenge: title, rename / add / remove rules (ticks of kept rules stay).
+// PATCH / (no id) edits the newest one, for older app versions.
+router.patch(['/', '/:id'], async (req, res) => {
+  const filter = { user: req.userId, active: true, ...(req.params.id && { _id: req.params.id }) };
+  const c = await Challenge.findOne(filter).sort({ createdAt: -1 });
   if (!c) return res.status(404).json({ message: 'Challenge not found' });
 
   const title = String(req.body?.title || '').trim();
@@ -111,8 +121,24 @@ router.patch('/items/:itemId/toggle', async (req, res) => {
   res.json({ challenge: withStats(c.toObject()) });
 });
 
-router.delete('/', async (req, res) => {
-  await Challenge.updateMany({ user: req.userId, active: true }, { $set: { active: false, endedAt: todayStr() } });
+// Continue a challenge that was ended early, if its days are not over yet (missed days stay ✗)
+router.post('/:id/resume', async (req, res) => {
+  const c = await Challenge.findOne({ _id: req.params.id, user: req.userId });
+  if (!c) return res.status(404).json({ message: 'Challenge not found' });
+  if (dayOf(c) > c.days) return res.status(400).json({ message: 'Challenge days are already over' });
+  if (!c.active && (await runningFor(req.userId)).length >= MAX_RUNNING) {
+    return res.status(400).json({ message: `Max ${MAX_RUNNING} challenges can run at once` });
+  }
+  c.active = true;
+  c.endedAt = undefined;
+  await c.save();
+  res.json({ challenge: withStats(c.toObject()) });
+});
+
+// End one challenge (DELETE / without id ends all, for older app versions)
+router.delete(['/', '/:id'], async (req, res) => {
+  const filter = { user: req.userId, active: true, ...(req.params.id && { _id: req.params.id }) };
+  await Challenge.updateMany(filter, { $set: { active: false, endedAt: todayStr() } });
   res.json({ ok: true });
 });
 
