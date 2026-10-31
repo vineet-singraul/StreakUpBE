@@ -1,149 +1,166 @@
 import cron from 'node-cron';
 import Task from '../models/Task.js';
 import User from '../models/User.js';
+import Report from '../models/Report.js';
 import { buildDailyReport, dailyStats } from './report.js';
-import { sendMail, reminderEmail, reportEmail, noTasksEmail } from './mailer.js';
+import { sendMail, reminderEmail, reportEmail } from './mailer.js';
 import { sendPush } from './push.js';
-import { notificationLine } from './gemini.js';
-import { todayStr, yesterdayStr, prettyDate } from '../utils/date.js';
+import { notificationLinesBatch } from './gemini.js';
+import { templateLine } from './notifyTemplates.js';
+import { todayStr, yesterdayStr, prettyDate, addDays } from '../utils/date.js';
 
-// Reminders may run every minute; emails still go out only on the hour (and on manual tests)
-const onTheHour = () => new Date().getUTCMinutes() === 30; // IST is UTC+5:30, so IST :00 == UTC :30
+const TZ = () => process.env.APP_TIMEZONE || 'Asia/Kolkata';
+const istHour = () => Number(new Intl.DateTimeFormat('en-GB', { timeZone: TZ(), hour: '2-digit', hourCycle: 'h23' }).format(new Date()));
+const istMinute = () => Number(new Intl.DateTimeFormat('en-GB', { timeZone: TZ(), minute: '2-digit' }).format(new Date()));
+
+// Gemini writes the notifications only at these IST hours (on the :00 run); every other run uses templates.
+// Batched 20 users per call, so 1000 users = 50 calls per slot.
+const AI_HOURS = () => (process.env.AI_NOTIFY_HOURS || '9,13,17,21').split(',').map(Number);
+const AI_BATCH = 20;
 
 // Shown in /api/health so we can see the jobs are actually firing on the server
-export const schedulerInfo = { reminderCron: null, lastReminder: null };
+export const schedulerInfo = { reminderCron: null, lastReminder: null, lastReport: null };
 
-/** 12 AM: final report for the day that just ended, emailed + pushed, asks for reasons */
-export async function runMidnightReports(date = yesterdayStr()) {
-  // Every user gets the 12 AM mail; those without tasks get a short "add tasks today" note
-  const users = await User.find({});
-  console.log(`[report] ${date}: sending to ${users.length} user(s)`);
-
-  for (const user of users) {
-    const userId = user._id;
-    try {
-      const report = await buildDailyReport(userId, date, { final: true });
-      const dateLabel = prettyDate(date);
-      if (!report) {
-        await sendMail({ to: user.email, subject: `📊 ${dateLabel}: koi task nahi tha`, html: noTasksEmail({ name: user.name, dateLabel }) });
-        await sendPush(user, { title: '📝 Aaj ke tasks add karo', body: 'Kal koi task nahi tha. Aaj ka plan abhi likh lo!', url: '/day/today' });
-        continue;
+/** Run fn over items with at most `limit` in flight */
+async function mapLimit(items, limit, fn) {
+  let i = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (i < items.length) {
+      const item = items[i++];
+      try {
+        await fn(item);
+      } catch (err) {
+        console.error('[job] item failed:', err.message);
       }
+    }
+  });
+  await Promise.all(workers);
+}
 
-      const week = await dailyStats(userId, date, 7);
-      // The report is always pushed too, so it still reaches the user if the email fails
+const chunk = (arr, n) => Array.from({ length: Math.ceil(arr.length / n) }, (_, k) => arr.slice(k * n, k * n + n));
+const firstName = (u) => (u.name || 'Friend').split(' ')[0];
+
+/** Every 30 min: one push per user (pending / no tasks / all done). Manual test (onlyUserId) also emails. */
+export async function runReminders(onlyUserId = null) {
+  const date = todayStr();
+  const userFilter = onlyUserId ? { _id: onlyUserId } : { pushReminders: true, 'pushSubscriptions.0': { $exists: true } };
+  const users = await User.find(userFilter);
+  if (!users.length) return { users: 0, pushed: 0, mailed: 0, ai: false };
+
+  // one query for everyone's tasks today
+  const tasks = await Task.find({ date, user: { $in: users.map((u) => u._id) } }).select('user title done').lean();
+  const byUser = new Map();
+  for (const t of tasks) {
+    const g = byUser.get(String(t.user)) || { total: 0, done: 0, pending: [] };
+    g.total += 1;
+    if (t.done) g.done += 1;
+    else g.pending.push(t.title);
+    byUser.set(String(t.user), g);
+  }
+
+  const slot = Math.floor(Date.now() / (30 * 60 * 1000));
+  const entries = users.map((u) => {
+    const g = byUser.get(String(u._id)) || { total: 0, done: 0, pending: [] };
+    const state = !g.total ? 'none' : g.pending.length ? 'pending' : 'done';
+    const focus = g.pending.length ? g.pending[slot % g.pending.length] : '';
+    return { user: u, g, state, id: String(u._id), name: firstName(u), language: u.language, focus, done: g.done, total: g.total };
+  });
+
+  // AI lines a few times a day, templates otherwise
+  const useAI = Boolean(onlyUserId) || (AI_HOURS().includes(istHour()) && istMinute() < 30);
+  const lines = new Map();
+  if (useAI) {
+    await mapLimit(chunk(entries, AI_BATCH), 2, async (batch) => {
+      for (const [id, line] of await notificationLinesBatch(batch)) lines.set(id, line);
+    });
+  }
+
+  const stats = { users: entries.length, pushed: 0, mailed: 0, ai: useAI, aiLines: lines.size };
+  await mapLimit(entries, 20, async (e) => {
+    const line = lines.get(e.id) || templateLine({ state: e.state, language: e.language, name: e.name, task: e.focus, done: e.done, total: e.total });
+    const url = e.state === 'pending' ? `/day/${date}` : '/day/today';
+    if (await sendPush(e.user, { ...line, url })) stats.pushed += 1;
+    // reminder emails only on a manual test, so free email quotas go to the 12 AM report
+    if (onlyUserId && e.user.emailReminders && e.g.pending.length) {
+      const ok = await sendMail({
+        to: e.user.email,
+        subject: `⏰ Reminder: ${e.g.pending.length} task(s) abhi baaki hain`,
+        html: reminderEmail({ name: e.name, pending: e.g.pending, done: e.g.done, total: e.g.total }),
+      });
+      if (ok) stats.mailed += 1;
+    }
+  });
+
+  console.log(`[reminder] users=${stats.users} pushed=${stats.pushed} ai=${useAI} aiLines=${stats.aiLines}`);
+  return stats;
+}
+
+/** 12 AM: AI report for everyone who had tasks (email + push), a push nudge for the rest, then cleanup */
+export async function runMidnightReports(date = yesterdayStr()) {
+  const started = Date.now();
+  const activeIds = (await Task.distinct('user', { date })).map(String);
+  const users = await User.find({});
+  const dateLabel = prettyDate(date);
+  let reports = 0;
+
+  // Gemini calls are paced by the limiter in gemini.js; 3 in flight keeps DB + push work overlapping
+  await mapLimit(users, 3, async (user) => {
+    if (!activeIds.includes(String(user._id))) {
+      await sendPush(user, { ...templateLine({ state: 'none', language: user.language, name: firstName(user) }), url: '/day/today' });
+      return;
+    }
+    const report = await buildDailyReport(user._id, date, { final: true });
+    if (!report) return;
+    reports += 1;
+    if (user.emailReminders) {
+      const week = await dailyStats(user._id, date, 7);
       await sendMail({
         to: user.email,
         subject: `📊 Daily Report ${dateLabel}: ${report.completedCount}/${report.total} done`,
         html: reportEmail({ name: user.name, dateLabel, report, week }),
       });
-      await sendPush(user, {
-        title: `Daily Report: ${report.completedCount}/${report.total} done`,
-        body: report.pending.length
-          ? `${report.pending.length} task(s) reh gaye. Batao kyon nahi ho paaye?`
-          : 'Shabash! Kal saare tasks complete kiye 🎉',
-        url: '/reports',
-      });
-    } catch (err) {
-      console.error('[report] failed for user', String(userId), err.message);
     }
-  }
-}
+    await sendPush(user, {
+      title: `📊 ${report.completedCount}/${report.total} done`,
+      body: report.pending.length ? `${report.pending.length} task(s) reh gaye. Batao kyon nahi ho paaye?` : 'Shabash! Kal saare tasks complete kiye 🎉',
+      url: '/reports',
+    });
+  });
 
-/** Every hour: remind users who still have pending tasks today */
-export async function runReminders(onlyUserId = null) {
-  const date = todayStr();
-  const match = { date };
-  if (onlyUserId) match.user = onlyUserId;
+  // Free MongoDB is 512 MB: keep recent history only (charts use the last 30 days)
+  const taskDays = Number(process.env.TASK_RETENTION_DAYS) || 180;
+  const reportDays = Number(process.env.REPORT_RETENTION_DAYS) || 60;
+  const [t, r] = await Promise.all([
+    Task.deleteMany({ date: { $lt: addDays(todayStr(), -taskDays) } }),
+    Report.deleteMany({ date: { $lt: addDays(todayStr(), -reportDays) } }),
+  ]);
 
-  const tasks = await Task.find(match).select('user title done').lean();
-  const byUser = new Map();
-  for (const t of tasks) {
-    const key = String(t.user);
-    if (!byUser.has(key)) byUser.set(key, { _id: t.user, total: 0, done: 0, pending: [] });
-    const g = byUser.get(key);
-    g.total += 1;
-    if (t.done) g.done += 1;
-    else g.pending.push(t.title);
-  }
-  const groups = [...byUser.values()].filter((g) => g.pending.length);
-
-  // Users who haven't added anything today get a push nudge (no email, to avoid hourly spam)
-  if (!onlyUserId) {
-    const noTasks = await User.find({ _id: { $nin: [...byUser.values()].map((g) => g._id) }, pushReminders: true, 'pushSubscriptions.0': { $exists: true } });
-    for (const user of noTasks) {
-      const line = await notificationLine({ name: user.name.split(' ')[0], language: user.language, state: 'none', fallback: { title: '📝 Aaj ke tasks add karo', body: 'Abhi tak aaj ka koi task nahi hai. 1 minute me plan likh lo!' } });
-      await sendPush(user, { ...line, url: '/day/today' }).catch(() => {});
-    }
-    if (noTasks.length) console.log(`[reminder] nudged ${noTasks.length} user(s) without tasks`);
-
-    // Everything done today: keep notifying, with a cheer + prompt to add the next task
-    const allDone = [...byUser.values()].filter((g) => !g.pending.length);
-    for (const g of allDone) {
-      const user = await User.findById(g._id);
-      if (!user?.pushReminders) continue;
-      const line = await notificationLine({ name: user.name.split(' ')[0], language: user.language, state: 'done', done: g.done, total: g.total, fallback: { title: `🎉 ${g.done}/${g.total} tasks done!`, body: 'Shabash! Aaj ke saare tasks poore. Kuch aur karna hai to naya task add karo.' } });
-      await sendPush(user, { ...line, url: '/day/today' }).catch(() => {});
-    }
-    if (allDone.length) console.log(`[reminder] cheered ${allDone.length} user(s) with all tasks done`);
-  }
-
-  console.log(`[reminder] ${date}: ${groups.length} user(s) with pending tasks`);
-
-  const stats = { users: groups.length, pushed: 0, mailed: 0, fallbackPushed: 0 };
-  for (const g of groups) {
-    try {
-      const user = await User.findById(g._id);
-      if (!user) continue;
-      const fallback = {
-        title: `⏰ ${g.pending.length} task pending hai!`,
-        body: g.pending.slice(0, 3).join(', ') + (g.pending.length > 3 ? '...' : ''),
-      };
-      // Gemini writes a different line each time, about one specific pending task
-      const line = await notificationLine({ name: user.name.split(' ')[0], language: user.language, state: 'pending', pending: g.pending, done: g.done, total: g.total, fallback });
-      const payload = { ...line, url: `/day/${date}` };
-
-      let pushed = user.pushReminders ? await sendPush(user, payload) : 0;
-      const mailed = user.emailReminders && (onlyUserId || onTheHour())
-        ? await sendMail({
-          to: user.email,
-          subject: `⏰ Reminder: ${g.pending.length} task(s) abhi baaki hain`,
-          html: reminderEmail({ name: user.name.split(' ')[0], pending: g.pending, done: g.done, total: g.total }),
-        })
-        : false;
-
-      // Email failed (or is off) and nothing reached the user yet: browser notification is the fallback
-      if (!mailed && !pushed) {
-        pushed = await sendPush(user, payload);
-        if (pushed) stats.fallbackPushed += 1;
-      }
-      if (pushed) stats.pushed += 1;
-      if (mailed) stats.mailed += 1;
-    } catch (err) {
-      console.error('[reminder] failed for user', String(g._id), err.message);
-    }
-  }
-  console.log(`[reminder] push=${stats.pushed} email=${stats.mailed} fallback-push=${stats.fallbackPushed}`);
-  return stats;
+  schedulerInfo.lastReport = { at: new Date().toISOString(), date, users: users.length, reports, seconds: Math.round((Date.now() - started) / 1000), cleaned: { tasks: t.deletedCount, reports: r.deletedCount } };
+  console.log('[report]', JSON.stringify(schedulerInfo.lastReport));
 }
 
 export function startScheduler() {
-  const timezone = process.env.APP_TIMEZONE || 'Asia/Kolkata';
+  const timezone = TZ();
   const reportCron = process.env.REPORT_CRON || '0 0 * * *';
   // Every 30 minutes (IST :00 and :30), all day. Fixed here on purpose: Render still has an old REMINDER_CRON value.
   const reminderCron = '*/30 * * * *';
   schedulerInfo.reminderCron = reminderCron;
 
+  let reminderRunning = false;
   cron.schedule(reportCron, () => runMidnightReports().catch(console.error), { timezone });
   cron.schedule(reminderCron, async () => {
+    if (reminderRunning) return; // never stack runs if one is slow
+    reminderRunning = true;
     try {
       const stats = await runReminders();
       schedulerInfo.lastReminder = { at: new Date().toISOString(), ...stats };
     } catch (err) {
       schedulerInfo.lastReminder = { at: new Date().toISOString(), error: err.message };
       console.error(err);
+    } finally {
+      reminderRunning = false;
     }
   }, { timezone });
 
-  console.log(`Scheduler started (${timezone}) report="${reportCron}" reminders="${reminderCron}"`);
+  console.log(`Scheduler started (${timezone}) report="${reportCron}" reminders="${reminderCron}" aiHours=${AI_HOURS().join(',')}`);
 }

@@ -18,9 +18,36 @@ export function isGeminiConfigured() {
   return Boolean(getClient());
 }
 
+// ---- Free-tier guard: space calls out (GEMINI_RPM) and stop at a daily budget (GEMINI_DAILY_LIMIT).
+// Past the budget every caller simply gets its fallback text, so nothing breaks or bills.
+const usage = { day: '', calls: 0, skipped: 0 };
+let nextSlot = 0;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const istDay = () => new Intl.DateTimeFormat('en-CA', { timeZone: process.env.APP_TIMEZONE || 'Asia/Kolkata' }).format(new Date());
+
+export function geminiUsage() {
+  return { ...usage, limit: Number(process.env.GEMINI_DAILY_LIMIT) || 900 };
+}
+
+async function takeSlot() {
+  const today = istDay();
+  if (usage.day !== today) Object.assign(usage, { day: today, calls: 0, skipped: 0 });
+  if (usage.calls >= (Number(process.env.GEMINI_DAILY_LIMIT) || 900)) {
+    usage.skipped += 1;
+    return false;
+  }
+  usage.calls += 1;
+  const gap = 60000 / (Number(process.env.GEMINI_RPM) || 10);
+  const wait = Math.max(0, nextSlot - Date.now());
+  nextSlot = Math.max(nextSlot, Date.now()) + gap;
+  if (wait) await sleep(wait);
+  return true;
+}
+
 async function ask(prompt, fallback) {
   const ai = getClient();
   if (!ai) return fallback;
+  if (!(await takeSlot())) return fallback;
   for (const model of models()) {
     try {
       const res = await ai.models.generateContent({ model, contents: prompt });
@@ -129,4 +156,38 @@ Reply with ONLY JSON: {"title": "<max 45 chars>", "body": "<max 110 chars>"}`;
     /* fall back below */
   }
   return fallback;
+}
+
+/**
+ * One Gemini call writes notifications for up to ~20 users at once (keeps free-tier usage tiny).
+ * entries: [{ id, name, language, state, focus, done, total }] -> Map(id -> { title, body })
+ */
+export async function notificationLinesBatch(entries) {
+  if (!entries.length) return new Map();
+  const time = new Intl.DateTimeFormat('en-IN', { timeZone: process.env.APP_TIMEZONE || 'Asia/Kolkata', hour: 'numeric', minute: '2-digit' }).format(new Date());
+  const people = entries.map((e) => ({
+    id: e.id,
+    name: e.name,
+    language: langName(e.language),
+    situation: e.state === 'pending'
+      ? `done ${e.done}/${e.total} tasks; write about this pending task: "${e.focus}"`
+      : e.state === 'done' ? `finished all ${e.total} tasks today; celebrate, suggest a small bonus (rest/plan tomorrow)`
+        : 'has not added any task today; nudge them to plan the day',
+  }));
+  const prompt = `You write short phone push notifications for a habit tracker app. Current time: ${time}.
+For EACH person below write one notification in THAT person's language. Specific, warm, energetic, a little witty, never preachy, 1 fitting emoji, no two alike.
+People: ${JSON.stringify(people)}
+Reply with ONLY a JSON array: [{"id": "<id>", "title": "<max 45 chars>", "body": "<max 110 chars>"}]`;
+
+  const raw = await ask(prompt, '');
+  const out = new Map();
+  try {
+    const arr = JSON.parse(raw.replace(/^```(json)?|```$/g, '').trim());
+    for (const r of Array.isArray(arr) ? arr : []) {
+      if (r?.id && r.title && r.body) out.set(String(r.id), { title: String(r.title).slice(0, 60), body: String(r.body).slice(0, 140) });
+    }
+  } catch {
+    /* callers fall back to templates for anyone missing */
+  }
+  return out;
 }

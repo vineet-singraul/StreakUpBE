@@ -15,7 +15,7 @@ import reportRoutes from './routes/reports.js';
 import notificationRoutes from './routes/notifications.js';
 import challengeRoutes from './routes/challenge.js';
 import { startScheduler, schedulerInfo } from './services/scheduler.js';
-import { isGeminiConfigured } from './services/gemini.js';
+import { isGeminiConfigured, geminiUsage } from './services/gemini.js';
 import { checkMail, mailStatus } from './services/mailer.js';
 
 const app = express();
@@ -40,6 +40,7 @@ app.get('/api/health', (req, res) => {
     push: process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY ? 'ready' : 'VAPID keys missing',
     timezone: process.env.APP_TIMEZONE || 'Asia/Kolkata',
     reminders: schedulerInfo,
+    gemini: geminiUsage(),
   });
 });
 

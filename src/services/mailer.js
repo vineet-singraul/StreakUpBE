@@ -49,7 +49,17 @@ async function sendViaBrevo({ to, subject, html }) {
   return true;
 }
 
+// Free email plans cap daily sends (Brevo free = 300/day); stay under MAIL_DAILY_LIMIT
+const mailUsage = { day: '', sent: 0 };
+function mailBudgetLeft() {
+  const today = new Date().toISOString().slice(0, 10);
+  if (mailUsage.day !== today) Object.assign(mailUsage, { day: today, sent: 0 });
+  return mailUsage.sent < (Number(process.env.MAIL_DAILY_LIMIT) || 280);
+}
+
 export async function sendMail({ to, subject, html }) {
+  if (!mailBudgetLeft()) return false;
+  mailUsage.sent += 1;
   if (process.env.BREVO_API_KEY) {
     try {
       return await sendViaBrevo({ to, subject, html });
