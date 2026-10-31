@@ -95,13 +95,15 @@ export async function runReminders(onlyUserId = null) {
   return stats;
 }
 
-/** 12 AM: AI report for everyone who had tasks (email + push), a push nudge for the rest, then cleanup */
-export async function runMidnightReports(date = yesterdayStr()) {
+/** 12 AM: AI report for everyone who had tasks (email + push), a push nudge for the rest, then cleanup.
+ *  onlyUserId runs it for one account (manual test) and skips the cleanup. */
+export async function runMidnightReports(date = yesterdayStr(), onlyUserId = null) {
   const started = Date.now();
   const activeIds = (await Task.distinct('user', { date })).map(String);
-  const users = await User.find({});
+  const users = await User.find(onlyUserId ? { _id: onlyUserId } : {});
   const dateLabel = prettyDate(date);
   let reports = 0;
+  let mailed = 0;
 
   // Gemini calls are paced by the limiter in gemini.js; 3 in flight keeps DB + push work overlapping
   await mapLimit(users, 3, async (user) => {
@@ -114,11 +116,12 @@ export async function runMidnightReports(date = yesterdayStr()) {
     reports += 1;
     if (user.emailReminders) {
       const week = await dailyStats(user._id, date, 7);
-      await sendMail({
+      const ok = await sendMail({
         to: user.email,
         subject: `📊 Daily Report ${dateLabel}: ${report.completedCount}/${report.total} done`,
         html: reportEmail({ name: user.name, dateLabel, report, week }),
       });
+      if (ok) mailed += 1;
     }
     await sendPush(user, {
       title: `📊 ${report.completedCount}/${report.total} done`,
@@ -126,6 +129,8 @@ export async function runMidnightReports(date = yesterdayStr()) {
       url: '/reports',
     });
   });
+
+  if (onlyUserId) return { date, reports, mailed };
 
   // Free MongoDB is 512 MB: keep recent history only (charts use the last 30 days)
   const taskDays = Number(process.env.TASK_RETENTION_DAYS) || 180;
@@ -135,7 +140,7 @@ export async function runMidnightReports(date = yesterdayStr()) {
     Report.deleteMany({ date: { $lt: addDays(todayStr(), -reportDays) } }),
   ]);
 
-  schedulerInfo.lastReport = { at: new Date().toISOString(), date, users: users.length, reports, seconds: Math.round((Date.now() - started) / 1000), cleaned: { tasks: t.deletedCount, reports: r.deletedCount } };
+  schedulerInfo.lastReport = { at: new Date().toISOString(), date, users: users.length, reports, mailed, seconds: Math.round((Date.now() - started) / 1000), cleaned: { tasks: t.deletedCount, reports: r.deletedCount } };
   console.log('[report]', JSON.stringify(schedulerInfo.lastReport));
 }
 
