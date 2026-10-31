@@ -101,3 +101,32 @@ In ${lang()}, reply in plain text (no markdown, no asterisks), under 150 words:
 
   return ask(prompt, fallback);
 }
+
+/**
+ * A fresh push-notification line for every reminder, written by Gemini about one specific task.
+ * state: 'pending' | 'none' (no tasks today) | 'done' (all tasks done). Returns { title, body }.
+ */
+export async function notificationLine({ name, language, state, pending = [], done = 0, total = 0, fallback }) {
+  const time = new Intl.DateTimeFormat('en-IN', { timeZone: process.env.APP_TIMEZONE || 'Asia/Kolkata', hour: 'numeric', minute: '2-digit' }).format(new Date());
+  // rotate which pending task the line is about, so each reminder talks about something different
+  const focus = pending.length ? pending[Math.floor(Date.now() / (30 * 60 * 1000)) % pending.length] : null;
+  const situation = {
+    pending: `${name} has done ${done}/${total} tasks today. Still pending: ${pending.join('; ')}. Write about this one task specifically: "${focus}".`,
+    none: `${name} has not added any task for today yet. Nudge them to plan the day and add tasks.`,
+    done: `${name} finished all ${total} tasks today. Celebrate and suggest one small bonus thing (rest, reflect, plan tomorrow).`,
+  }[state];
+
+  const prompt = `You write short phone push notifications for a habit tracker app. Current time: ${time}.
+${situation}
+Write in ${langName(language)}. Be specific, warm and energetic, a little witty, never preachy. Vary wording every time; use 1 fitting emoji.
+Reply with ONLY JSON: {"title": "<max 45 chars>", "body": "<max 110 chars>"}`;
+
+  const raw = await ask(prompt, '');
+  try {
+    const json = JSON.parse(raw.replace(/^```(json)?|```$/g, '').trim());
+    if (json.title && json.body) return { title: String(json.title).slice(0, 60), body: String(json.body).slice(0, 140) };
+  } catch {
+    /* fall back below */
+  }
+  return fallback;
+}
