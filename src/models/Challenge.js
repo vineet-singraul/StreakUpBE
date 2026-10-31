@@ -6,7 +6,7 @@ const challengeSchema = new mongoose.Schema(
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     title: { type: String, required: true, trim: true, maxlength: 80 },
     startDate: { type: String, required: true },
-    days: { type: Number, default: 30 },
+    days: { type: Number, default: 30, min: 10, max: 90 }, // length chosen by the user
     active: { type: Boolean, default: true },
     endedAt: String, // YYYY-MM-DD when it was ended early or replaced
     items: [

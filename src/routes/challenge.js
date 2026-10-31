@@ -6,6 +6,8 @@ const router = Router();
 
 const POINTS_PER_TICK = 10;
 const PERFECT_DAY_BONUS = 20;
+const MIN_DAYS = 10;
+const MAX_DAYS = 90;
 
 // Day number of `date` inside the challenge (1-based)
 function dayOf(challenge, date = todayStr()) {
@@ -36,7 +38,12 @@ router.get('/', async (req, res) => {
 
 // Start a new challenge today (ends any running one)
 router.post('/', async (req, res) => {
-  const title = String(req.body?.title || '').trim() || '30 Day Hard Challenge';
+  const title = String(req.body?.title || '').trim().slice(0, 80);
+  if (!title) return res.status(400).json({ message: 'Challenge title is required' });
+  const days = Number(req.body?.days);
+  if (!Number.isInteger(days) || days < MIN_DAYS || days > MAX_DAYS) {
+    return res.status(400).json({ message: `Days must be between ${MIN_DAYS} and ${MAX_DAYS}` });
+  }
   const items = (Array.isArray(req.body?.items) ? req.body.items : [])
     .map((s) => String(s).trim().slice(0, 80))
     .filter(Boolean)
@@ -44,7 +51,7 @@ router.post('/', async (req, res) => {
   if (!items.length) return res.status(400).json({ message: 'Add at least one challenge rule' });
 
   await Challenge.updateMany({ user: req.userId, active: true }, { $set: { active: false, endedAt: todayStr() } });
-  const c = await Challenge.create({ user: req.userId, title, startDate: todayStr(), items: items.map((name) => ({ name })) });
+  const c = await Challenge.create({ user: req.userId, title, days, startDate: todayStr(), items: items.map((name) => ({ name })) });
   res.status(201).json({ challenge: withStats(c.toObject()) });
 });
 
