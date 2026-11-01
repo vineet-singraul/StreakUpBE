@@ -43,7 +43,7 @@ const firstName = (u) => (u.name || 'Friend').split(' ')[0];
 /** Every 30 min: one push per user (pending / no tasks / all done). Manual test (onlyUserId) also emails. */
 export async function runReminders(onlyUserId = null) {
   const date = todayStr();
-  const userFilter = onlyUserId ? { _id: onlyUserId } : { pushReminders: true, 'pushSubscriptions.0': { $exists: true } };
+  const userFilter = onlyUserId ? { _id: onlyUserId } : { pushReminders: true, blocked: { $ne: true }, 'pushSubscriptions.0': { $exists: true } };
   const users = await User.find(userFilter);
   if (!users.length) return { users: 0, pushed: 0, mailed: 0, ai: false };
 
@@ -100,7 +100,7 @@ export async function runReminders(onlyUserId = null) {
 export async function runMidnightReports(date = yesterdayStr(), onlyUserId = null) {
   const started = Date.now();
   const activeIds = (await Task.distinct('user', { date })).map(String);
-  const users = await User.find(onlyUserId ? { _id: onlyUserId } : {});
+  const users = await User.find(onlyUserId ? { _id: onlyUserId } : { blocked: { $ne: true } });
   const dateLabel = prettyDate(date);
   let reports = 0;
   let mailed = 0;

@@ -8,6 +8,7 @@ import mongoose from 'mongoose';
 import { connectDB } from './config/db.js';
 import { requireAuth, requireAdmin } from './middleware/auth.js';
 import adminRoutes from './routes/admin.js';
+import { loadBlocked } from './services/blocked.js';
 import authRoutes from './routes/auth.js';
 import calendarRoutes from './routes/calendar.js';
 import taskRoutes from './routes/tasks.js';
@@ -84,6 +85,7 @@ function startKeepAlive() {
 
 connectDB()
   .then(() => {
+    loadBlocked().catch((err) => console.error('Could not load blocked users:', err.message));
     app.listen(PORT, () => console.log(`API running on http://localhost:${PORT}`));
     startScheduler();
     startKeepAlive();

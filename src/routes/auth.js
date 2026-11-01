@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { OAuth2Client } from 'google-auth-library';
-import User, { adminEmail } from '../models/User.js';
-import { requireAuth, signToken } from '../middleware/auth.js';
+import User, { isAdminEmail } from '../models/User.js';
+import { BLOCKED_MESSAGE, requireAuth, signToken } from '../middleware/auth.js';
 
 const router = Router();
 const googleClient = new OAuth2Client();
@@ -33,7 +33,7 @@ router.post('/google', async (req, res) => {
 
   if (!user) {
     // The admin can use either tab; everyone else must sign up first
-    if (mode !== 'signup' && payload.email?.toLowerCase() !== adminEmail()) {
+    if (mode !== 'signup' && !isAdminEmail(payload.email)) {
       return res.status(404).json({ message: 'Account nahi mila. Pehle "Sign Up" karo.', needSignup: true });
     }
     user = await User.create({
@@ -44,6 +44,8 @@ router.post('/google', async (req, res) => {
     });
     isNew = true;
   }
+
+  if (user.blocked) return res.status(403).json({ message: BLOCKED_MESSAGE, blocked: true });
 
   user.lastLoginAt = new Date();
   if (payload.picture) user.avatar = payload.picture;

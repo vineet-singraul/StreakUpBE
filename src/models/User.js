@@ -29,16 +29,22 @@ const userSchema = new mongoose.Schema(
       accuracy: Number, // meters
       capturedAt: Date,
     },
+    blocked: { type: Boolean, default: false },
+    blockedAt: Date,
   },
   { timestamps: true },
 );
 
-// A function, not a constant: imports run before dotenv.config() in server.js
-export const adminEmail = () => (process.env.ADMIN_EMAIL || 'bigbasketnex@gmail.com').toLowerCase();
+// ADMIN_EMAILS is a comma-separated list. A function, not a constant: imports run before
+// dotenv.config() in server.js
+const DEFAULT_ADMINS = 'bigbasketnex@gmail.com,singhvisal709@gmail.com';
+export const adminEmails = () =>
+  (process.env.ADMIN_EMAILS || DEFAULT_ADMINS).split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+export const isAdminEmail = (email) => adminEmails().includes(String(email || '').toLowerCase());
 
 userSchema.methods.toPublic = function toPublic() {
   return {
-    isAdmin: this.email === adminEmail(),
+    isAdmin: isAdminEmail(this.email),
     id: this._id,
     email: this.email,
     name: this.name,
