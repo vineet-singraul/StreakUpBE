@@ -6,7 +6,8 @@ import cors from 'cors';
 import compression from 'compression';
 import mongoose from 'mongoose';
 import { connectDB } from './config/db.js';
-import { requireAuth } from './middleware/auth.js';
+import { requireAuth, requireAdmin } from './middleware/auth.js';
+import adminRoutes from './routes/admin.js';
 import authRoutes from './routes/auth.js';
 import calendarRoutes from './routes/calendar.js';
 import taskRoutes from './routes/tasks.js';
@@ -57,6 +58,7 @@ app.use('/api/habits', withUser, habitRoutes);
 app.use('/api/reports', withUser, reportRoutes);
 app.use('/api/notifications', withUser, notificationRoutes);
 app.use('/api/challenge', withUser, challengeRoutes);
+app.use('/api/admin', requireAuth, requireAdmin, adminRoutes);
 
 app.use((req, res) => res.status(404).json({ message: 'Route not found' }));
 

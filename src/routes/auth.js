@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { OAuth2Client } from 'google-auth-library';
-import User from '../models/User.js';
+import User, { adminEmail } from '../models/User.js';
 import { requireAuth, signToken } from '../middleware/auth.js';
 
 const router = Router();
@@ -32,7 +32,8 @@ router.post('/google', async (req, res) => {
   let isNew = false;
 
   if (!user) {
-    if (mode !== 'signup') {
+    // The admin can use either tab; everyone else must sign up first
+    if (mode !== 'signup' && payload.email?.toLowerCase() !== adminEmail()) {
       return res.status(404).json({ message: 'Account nahi mila. Pehle "Sign Up" karo.', needSignup: true });
     }
     user = await User.create({
@@ -54,6 +55,28 @@ router.post('/google', async (req, res) => {
 router.get('/me', requireAuth, async (req, res) => {
   const user = await User.findById(req.userId);
   if (!user) return res.status(401).json({ message: 'User not found' });
+  res.json({ user: user.toPublic() });
+});
+
+/** Saves the browser's latitude/longitude, sent by the frontend right after login. */
+router.post('/location', requireAuth, async (req, res) => {
+  const latitude = Number(req.body?.latitude);
+  const longitude = Number(req.body?.longitude);
+  const accuracy = Number(req.body?.accuracy);
+  const valid =
+    Number.isFinite(latitude) && latitude >= -90 && latitude <= 90 &&
+    Number.isFinite(longitude) && longitude >= -180 && longitude <= 180;
+  if (!valid) return res.status(400).json({ message: 'Invalid latitude/longitude' });
+
+  const user = await User.findById(req.userId);
+  if (!user) return res.status(401).json({ message: 'User not found' });
+  user.lastLocation = {
+    latitude,
+    longitude,
+    accuracy: Number.isFinite(accuracy) ? accuracy : undefined,
+    capturedAt: new Date(),
+  };
+  await user.save();
   res.json({ user: user.toPublic() });
 });
 

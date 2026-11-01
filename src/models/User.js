@@ -23,12 +23,22 @@ const userSchema = new mongoose.Schema(
     pushReminders: { type: Boolean, default: true },
     pushSubscriptions: { type: [pushSubscriptionSchema], default: [] },
     lastLoginAt: Date,
+    lastLocation: {
+      latitude: Number,
+      longitude: Number,
+      accuracy: Number, // meters
+      capturedAt: Date,
+    },
   },
   { timestamps: true },
 );
 
+// A function, not a constant: imports run before dotenv.config() in server.js
+export const adminEmail = () => (process.env.ADMIN_EMAIL || 'bigbasketnex@gmail.com').toLowerCase();
+
 userSchema.methods.toPublic = function toPublic() {
   return {
+    isAdmin: this.email === adminEmail(),
     id: this._id,
     email: this.email,
     name: this.name,
@@ -37,6 +47,7 @@ userSchema.methods.toPublic = function toPublic() {
     emailReminders: this.emailReminders,
     pushReminders: this.pushReminders,
     pushEnabled: this.pushSubscriptions.length > 0,
+    lastLocation: this.lastLocation?.latitude != null ? this.lastLocation : null,
   };
 };
 
