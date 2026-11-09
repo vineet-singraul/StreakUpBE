@@ -8,6 +8,41 @@ import LocationConsent from '../models/LocationConsent.js';
 const router = Router();
 const esc = (s) => String(s).slice(0, 100).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+// Tiny in-memory memoizer so repeated admin polls don't re-scan the collection every few seconds
+function cached(ttlMs, fn) {
+  let value;
+  let until = 0;
+  return async () => {
+    if (until > Date.now()) return value;
+    value = await fn();
+    until = Date.now() + ttlMs;
+    return value;
+  };
+}
+
+// Non-admin user ids change rarely; cache for 30s
+const nonAdminIds = cached(30_000, () => User.find({ email: { $nin: adminEmails() } }).distinct('_id'));
+
+// Filter dropdown options (whole collection scan) cached for 60s
+const filterOptions = cached(60_000, async () => {
+  const [countries, states, cities] = await Promise.all(
+    ['lastIp.country', 'lastIp.region', 'lastIp.city'].map((f) => LocationConsent.distinct(f)),
+  );
+  const clean = (a) => a.filter(Boolean).sort();
+  return { countries: clean(countries), states: clean(states), cities: clean(cities) };
+});
+
+// Global stats (independent of table filters) cached for 15s
+const globalStats = cached(15_000, async () => {
+  const base = { user: { $in: await nonAdminIds() } };
+  const [totalTracked, ipLocations, latest] = await Promise.all([
+    LocationConsent.countDocuments(base),
+    LocationConsent.countDocuments({ ...base, 'lastIp.ip': { $exists: true } }),
+    LocationConsent.findOne(base).sort({ lastActiveAt: -1 }).select('lastActiveAt').lean(),
+  ]);
+  return { totalTracked, ipLocations, lastUpdated: latest?.lastActiveAt || null };
+});
+
 function row(c, u) {
   const ip = c.lastIp?.ip ? c.lastIp : null;
   return {
@@ -34,19 +69,12 @@ function row(c, u) {
   };
 }
 
-const nonAdminIds = () => User.find({ email: { $nin: adminEmails() } }).distinct('_id');
+router.get('/stats', async (req, res) => res.json(await globalStats()));
 
-router.get('/stats', async (req, res) => {
-  const base = { user: { $in: await nonAdminIds() } };
-  const [totalTracked, ipLocations, latest] = await Promise.all([
-    LocationConsent.countDocuments(base),
-    LocationConsent.countDocuments({ ...base, 'lastIp.ip': { $exists: true } }),
-    LocationConsent.findOne(base).sort({ lastActiveAt: -1 }).select('lastActiveAt').lean(),
-  ]);
-  res.json({ totalTracked, ipLocations, lastUpdated: latest?.lastActiveAt || null });
-});
-
-/** Query: search, country, state, city, sort (latest|oldest), page, limit */
+/**
+ * One request powers the whole table view: rows + total + stats + filter options.
+ * Query: search, country, state, city, sort (latest|oldest), page, limit
+ */
 router.get('/users', async (req, res) => {
   const { search, country, state, city, sort } = req.query;
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
@@ -61,7 +89,7 @@ router.get('/users', async (req, res) => {
     if (val) match[field] = new RegExp(`^${esc(val)}$`, 'i');
   }
 
-  const [[result], countries, states, cities] = await Promise.all([
+  const [[result], filters, stats] = await Promise.all([
     LocationConsent.aggregate([
       { $lookup: { from: 'users', localField: 'user', foreignField: '_id', as: 'u', pipeline: [{ $project: { name: 1, email: 1, avatar: 1 } }] } },
       { $unwind: '$u' },
@@ -69,25 +97,43 @@ router.get('/users', async (req, res) => {
       { $sort: { lastActiveAt: sort === 'oldest' ? 1 : -1, _id: 1 } },
       { $facet: { rows: [{ $skip: (page - 1) * limit }, { $limit: limit }], total: [{ $count: 'n' }] } },
     ]),
-    ...['lastIp.country', 'lastIp.region', 'lastIp.city'].map((f) => LocationConsent.distinct(f)),
+    filterOptions(),
+    globalStats(),
   ]);
 
-  const clean = (a) => a.filter(Boolean).sort();
   res.json({
     users: result.rows.map((c) => row(c, c.u)),
     total: result.total[0]?.n || 0,
     page,
     limit,
-    filters: { countries: clean(countries), states: clean(states), cities: clean(cities) },
+    filters,
+    stats,
   });
 });
 
-/** Every tracked user's IP point, for the map. */
+/** Lightweight map markers: only the fields the map needs, for tracked users with coordinates. */
 router.get('/map', async (req, res) => {
-  const list = await LocationConsent.find({ user: { $in: await nonAdminIds() }, 'lastIp.latitude': { $exists: true } })
-    .populate('user', 'name email avatar')
+  const list = await LocationConsent.find(
+    { user: { $in: await nonAdminIds() }, 'lastIp.latitude': { $exists: true } },
+    { user: 1, lastActiveAt: 1, 'lastIp.latitude': 1, 'lastIp.longitude': 1, 'lastIp.ip': 1, 'lastIp.city': 1, 'lastIp.region': 1, 'lastIp.country': 1, 'lastIp.flag': 1 },
+  )
+    .populate('user', 'name email')
     .lean();
-  res.json({ users: list.filter((c) => c.user).map((c) => row(c, c.user)) });
+  res.json({
+    users: list.filter((c) => c.user).map((c) => ({
+      userId: String(c.user._id),
+      name: c.user.name,
+      email: c.user.email,
+      ip: c.lastIp.ip,
+      city: c.lastIp.city,
+      state: c.lastIp.region,
+      country: c.lastIp.country,
+      flag: c.lastIp.flag,
+      latitude: c.lastIp.latitude,
+      longitude: c.lastIp.longitude,
+      lastActive: c.lastActiveAt,
+    })),
+  });
 });
 
 /** One user's details and recent IP history (last 50). */
