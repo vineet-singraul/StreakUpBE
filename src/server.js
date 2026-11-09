@@ -16,6 +16,8 @@ import habitRoutes from './routes/habits.js';
 import reportRoutes from './routes/reports.js';
 import notificationRoutes from './routes/notifications.js';
 import challengeRoutes from './routes/challenge.js';
+import locationRoutes from './routes/location.js';
+import locationTrackerRoutes from './routes/locationTracker.js';
 import { startScheduler, schedulerInfo } from './services/scheduler.js';
 import { isGeminiConfigured, geminiUsage } from './services/gemini.js';
 import { checkMail, mailStatus } from './services/mailer.js';
@@ -59,6 +61,8 @@ app.use('/api/habits', withUser, habitRoutes);
 app.use('/api/reports', withUser, reportRoutes);
 app.use('/api/notifications', withUser, notificationRoutes);
 app.use('/api/challenge', withUser, challengeRoutes);
+app.use('/api/location', withUser, locationRoutes);
+app.use('/api/admin/location-tracker', requireAuth, requireAdmin, locationTrackerRoutes);
 app.use('/api/admin', requireAuth, requireAdmin, adminRoutes);
 
 app.use((req, res) => res.status(404).json({ message: 'Route not found' }));
