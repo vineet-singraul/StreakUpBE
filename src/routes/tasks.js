@@ -55,7 +55,11 @@ router.post('/', async (req, res) => {
   const date = todayStr();
   if (!isMonthUnlocked(date.slice(0, 7))) return res.status(403).json({ message: 'Ye month calendar me nahi hai' });
 
-  const task = await Task.create({ user: req.userId, date, title });
+  // Optional target the user sets: finish in N minutes (1 min .. 24 h)
+  const est = Number(req.body?.estimateMinutes);
+  const estimateMinutes = Number.isFinite(est) && est >= 1 ? Math.min(Math.round(est), 1440) : undefined;
+
+  const task = await Task.create({ user: req.userId, date, title, estimateMinutes });
   res.status(201).json({ task });
 });
 
