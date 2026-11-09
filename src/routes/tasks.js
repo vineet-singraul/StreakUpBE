@@ -68,11 +68,23 @@ router.patch('/:id', async (req, res) => {
     else unset.doneAt = 1;
   }
   if (typeof req.body?.title === 'string' && req.body.title.trim()) set.title = req.body.title.trim().slice(0, 200);
-  if (!Object.keys(set).length && !Object.keys(unset).length) return res.status(400).json({ message: 'Nothing to update' });
+
+  // Focus timer: add elapsed seconds to the running total (capped so one call can't be absurd)
+  const inc = {};
+  const addSeconds = Number(req.body?.addSeconds);
+  if (Number.isFinite(addSeconds) && addSeconds > 0) inc.timeSpent = Math.min(Math.round(addSeconds), 12 * 3600);
+
+  if (!Object.keys(set).length && !Object.keys(unset).length && !Object.keys(inc).length) {
+    return res.status(400).json({ message: 'Nothing to update' });
+  }
 
   const task = await Task.findOneAndUpdate(
     { _id: req.params.id, user: req.userId, date: todayStr() },
-    { $set: set, ...(Object.keys(unset).length ? { $unset: unset } : {}) },
+    {
+      ...(Object.keys(set).length ? { $set: set } : {}),
+      ...(Object.keys(unset).length ? { $unset: unset } : {}),
+      ...(Object.keys(inc).length ? { $inc: inc } : {}),
+    },
     { returnDocument: 'after', lean: true },
   );
   if (!task) return notEditable(req, res);

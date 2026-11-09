@@ -7,6 +7,7 @@ const taskSchema = new mongoose.Schema(
     title: { type: String, required: true, trim: true, maxlength: 200 },
     done: { type: Boolean, default: false },
     doneAt: Date,
+    timeSpent: { type: Number, default: 0 }, // focus-timer seconds accumulated on this task
   },
   { timestamps: true },
 );
