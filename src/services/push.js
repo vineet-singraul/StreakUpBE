@@ -12,7 +12,7 @@ function ensureConfigured() {
 }
 
 /** Sends a browser notification to every device the user enabled. Removes dead subscriptions. */
-export async function sendPush(user, payload, { exceptEndpoint } = {}) {
+export async function sendPush(user, payload) {
   if (!ensureConfigured() || !user.pushSubscriptions?.length) return 0;
 
   const body = JSON.stringify(payload);
@@ -20,7 +20,7 @@ export async function sendPush(user, payload, { exceptEndpoint } = {}) {
   const dead = [];
 
   await Promise.all(
-    user.pushSubscriptions.filter((s) => s.endpoint !== exceptEndpoint).map(async (sub) => {
+    user.pushSubscriptions.map(async (sub) => {
       try {
         await webpush.sendNotification(sub, body);
         sent += 1;

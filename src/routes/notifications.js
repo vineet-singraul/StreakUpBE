@@ -2,7 +2,6 @@ import { Router } from 'express';
 import User from '../models/User.js';
 import { sendPush } from '../services/push.js';
 import { runReminders } from '../services/scheduler.js';
-import { rateLimit } from '../middleware/rateLimit.js';
 
 const router = Router();
 
@@ -38,25 +37,6 @@ router.post('/test', async (req, res) => {
     url: '/',
   });
   res.json({ sent });
-});
-
-// "Find my phone": rings every OTHER device of this user (the one pressing the button is skipped)
-router.post('/ring', rateLimit({ max: 10 }), async (req, res) => {
-  const user = await User.findById(req.userId);
-  const exceptEndpoint = typeof req.body?.except === 'string' ? req.body.except : undefined;
-  const others = user.pushSubscriptions.filter((s) => s.endpoint !== exceptEndpoint).length;
-  if (!others) {
-    return res.json({ sent: false, message: 'Aapke phone pe notifications ON nahi hain. Phone pe app kholke Settings se ON karo.' });
-  }
-  const sent = await sendPush(
-    user,
-    { type: 'find-phone', title: '📱 Main yahan hoon!', body: 'Aapne "Phone Dhundo" se bajaya. Tap karke band karo.', url: '/find-phone' },
-    { exceptEndpoint },
-  );
-  res.json({
-    sent: sent > 0,
-    message: sent ? `${sent} device pe ring bhej di 🔔` : 'Ring nahi ja payi. Phone pe notifications dobara ON karo.',
-  });
 });
 
 // Sends the "pending tasks" reminder (push + email) to yourself right now

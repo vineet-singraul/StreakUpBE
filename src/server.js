@@ -29,8 +29,6 @@ app.set('etag', false); // data changes every click; avoid 304 revalidation roun
 app.use(compression());
 // CLIENT_URL may list several origins, e.g. "https://myapp.vercel.app,http://localhost:5173"
 const allowedOrigins = (process.env.CLIENT_URL || 'http://localhost:5173').split(',').map((s) => s.trim().replace(/\/$/, ''));
-// The Android app (Capacitor) serves the bundled site from https://localhost
-allowedOrigins.push('https://localhost', 'capacitor://localhost');
 app.use(cors({ origin: allowedOrigins }));
 app.use(express.json());
 app.use('/api', (req, res, next) => {
