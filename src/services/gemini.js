@@ -60,6 +60,9 @@ async function ask(prompt, fallback) {
   return fallback;
 }
 
+// Shared with the chatbot service (same rate limit / daily budget / model fallbacks)
+export { ask as askGemini };
+
 const LANGUAGE_NAMES = {
   en: 'simple English',
   hi: 'Hindi (Devanagari script)',
