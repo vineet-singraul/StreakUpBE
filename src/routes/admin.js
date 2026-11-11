@@ -3,6 +3,7 @@ import User, { adminEmails, isAdminEmail } from '../models/User.js';
 import Habit from '../models/Habit.js';
 import Task from '../models/Task.js';
 import Challenge from '../models/Challenge.js';
+import ChatMessage from '../models/ChatMessage.js';
 import { setBlocked } from '../services/blocked.js';
 
 const router = Router();
@@ -69,6 +70,45 @@ router.get('/users/:id/tasks', async (req, res) => {
     .select('date title done doneAt createdAt')
     .lean();
   res.json({ tasks: tasks.map(({ _id, ...t }) => ({ id: _id, ...t })) });
+});
+
+/** Chatbot conversations of all users, newest first. ?user=<id> filters to one user, ?before=<ISO date> pages back. */
+router.get('/chats', async (req, res) => {
+  const filter = {};
+  if (req.query.user) filter.user = req.query.user;
+  if (req.query.before) {
+    const d = new Date(req.query.before);
+    if (!Number.isNaN(d.getTime())) filter.createdAt = { $lt: d };
+  }
+  const limit = Math.min(Number(req.query.limit) || 100, 300);
+  const chats = await ChatMessage.find(filter)
+    .sort({ createdAt: -1 })
+    .limit(limit)
+    .populate('user', 'name email avatar')
+    .lean();
+  res.json({
+    chats: chats.map((c) => ({
+      id: c._id,
+      user: c.user ? { id: c.user._id, name: c.user.name, email: c.user.email, avatar: c.user.avatar } : null,
+      question: c.question,
+      answer: c.answer,
+      query: c.query,
+      resultCount: c.resultCount,
+      createdAt: c.createdAt,
+    })),
+    hasMore: chats.length === limit,
+  });
+});
+
+/** How many chat messages each user has sent: { userId: count } */
+router.get('/chats/counts', async (req, res) => {
+  res.json({ counts: await countByUser(ChatMessage) });
+});
+
+router.delete('/chats/:chatId', async (req, res) => {
+  const chat = await ChatMessage.findByIdAndDelete(req.params.chatId);
+  if (!chat) return res.status(404).json({ message: 'Chat not found' });
+  res.json({ ok: true });
 });
 
 router.delete('/tasks/:taskId', async (req, res) => {

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import User from '../models/User.js';
+import ChatMessage from '../models/ChatMessage.js';
 import { chat } from '../services/chatbot.js';
 import { rateLimit } from '../middleware/rateLimit.js';
 
@@ -19,6 +20,15 @@ router.post('/', rateLimit({ windowMs: 60_000, max: 8 }), async (req, res) => {
     message,
     history: req.body?.history,
   });
+  // Save the exchange so admins can review chats (a failed save never breaks the reply)
+  ChatMessage.create({
+    user: req.userId,
+    question: message,
+    answer: result.answer,
+    query: result.query || null,
+    resultCount: result.resultCount,
+  }).catch((err) => console.error('Could not save chat:', err.message));
+
   res.json(result);
 });
 
