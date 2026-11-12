@@ -23,6 +23,8 @@ const userSchema = new mongoose.Schema(
     pushReminders: { type: Boolean, default: true },
     pushSubscriptions: { type: [pushSubscriptionSchema], default: [] },
     lastLoginAt: Date,
+    lastSeenAt: Date, // last API request / heartbeat (throttled), used for "online now"
+    loggedOutAt: Date,
     lastLocation: {
       latitude: Number,
       longitude: Number,

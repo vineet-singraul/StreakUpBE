@@ -5,6 +5,7 @@ import Task from '../models/Task.js';
 import Challenge from '../models/Challenge.js';
 import ChatMessage from '../models/ChatMessage.js';
 import { setBlocked } from '../services/blocked.js';
+import { isOnline } from '../middleware/auth.js';
 
 const router = Router();
 
@@ -37,6 +38,8 @@ router.get('/users', async (req, res) => {
         pushDevices: u.pushSubscriptions?.length || 0,
         createdAt: u.createdAt,
         lastLoginAt: u.lastLoginAt,
+        lastSeenAt: u.lastSeenAt,
+        online: isOnline(u),
         lastLocation: u.lastLocation?.latitude != null ? u.lastLocation : null,
         blocked: Boolean(u.blocked),
         blockedAt: u.blockedAt,

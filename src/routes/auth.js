@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { OAuth2Client } from 'google-auth-library';
 import User, { isAdminEmail } from '../models/User.js';
-import { BLOCKED_MESSAGE, requireAuth, signToken } from '../middleware/auth.js';
+import { BLOCKED_MESSAGE, requireAuth, signToken, touchSeen, forgetSeen } from '../middleware/auth.js';
 
 const router = Router();
 const googleClient = new OAuth2Client();
@@ -48,10 +48,24 @@ router.post('/google', async (req, res) => {
   if (user.blocked) return res.status(403).json({ message: BLOCKED_MESSAGE, blocked: true });
 
   user.lastLoginAt = new Date();
+  user.lastSeenAt = user.lastLoginAt;
   if (payload.picture) user.avatar = payload.picture;
   await user.save();
 
   res.json({ token: signToken(user._id), user: user.toPublic(), isNew });
+});
+
+// Heartbeat from an open app tab, keeps the user "online" for the admin panel
+router.post('/ping', requireAuth, (req, res) => {
+  touchSeen(req.userId, true);
+  res.json({ ok: true });
+});
+
+// Marks the user offline right away instead of waiting for the online window to expire
+router.post('/logout', requireAuth, async (req, res) => {
+  forgetSeen(req.userId);
+  await User.updateOne({ _id: req.userId }, { $set: { loggedOutAt: new Date(Date.now() + 1000) } });
+  res.json({ ok: true });
 });
 
 router.get('/me', requireAuth, async (req, res) => {
