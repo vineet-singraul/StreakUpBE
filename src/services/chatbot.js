@@ -128,7 +128,7 @@ Reply with ONLY one JSON object, no markdown, in one of these shapes:
 3. Data needed, grouping / sums / averages / percentages:
    {"needsData": true, "collection": "...", "operation": "aggregate", "pipeline": [ ...stages... ], "explain": "..."}
 4. No data needed (greeting, general advice, question outside the app's data):
-   {"needsData": false, "reply": "<short helpful answer in ${LANGUAGE_NAMES[language] || 'Hinglish'}; you can only read their data, never offer to change it>"}
+   {"needsData": false, "reply": "<short helpful answer in ${LANGUAGE_NAMES[language] || 'Hinglish'}; you can only read their data, never offer to change it; start with one fitting emoji, e.g. 👋 greeting, 💡 tip, 🙂 general>"}
 
 Rules:
 - Read-only. Allowed stages: $match, $project, $addFields, $set, $unwind, $group, $sort, $limit, $skip, $count, $facet, $bucket, $sortByCount, $unset, $replaceRoot.
@@ -193,9 +193,13 @@ async function writeAnswer({ message, plan, rows, name, language }) {
   if (data.length > 12000) data = `${data.slice(0, 12000)}... (truncated)`;
   const count = Array.isArray(rows) ? rows.length : null;
 
+  // Used when Gemini is unavailable: still shows status emojis per row
+  const mark = (r) => (r.done === true ? '✅' : r.done === false ? '⏳' : '📌');
   const fallback = Array.isArray(rows)
-    ? (rows.length ? `${rows.length} records mile:\n${rows.slice(0, 10).map((r) => `- ${r.title || r.name || r.date || JSON.stringify(r).slice(0, 80)}`).join('\n')}` : 'Is sawaal ke liye koi data nahi mila.')
-    : `Result: ${data}`;
+    ? (rows.length
+      ? `📊 ${rows.length} records mile:\n${rows.slice(0, 10).map((r) => `${mark(r)} ${r.title || r.name || r.date || JSON.stringify(r).slice(0, 80)}`).join('\n')}`
+      : '🤔 Is sawaal ke liye koi data nahi mila.')
+    : `📊 Result: ${data}`;
 
   const prompt = `You are a friendly assistant inside a habit tracker app, answering ${name}'s question about their own data.
 Today is ${todayStr()}.
@@ -204,23 +208,46 @@ Query that was run: ${plan.explain || plan.operation} (collection: ${plan.collec
 Result${count != null ? ` (${count} rows)` : ''}: ${data}
 
 Answer in ${LANGUAGE_NAMES[language] || 'Hinglish'}. Use ONLY the result data; if it is empty, say no matching data was found and suggest what they could do.
-You can only READ data: never offer to add, edit or delete anything. Be short and clear (under 120 words). Use simple bullet lines starting with "• " for lists. No markdown headings, no asterisks, no JSON. timeSpent is in seconds — convert to minutes. Dates like "2026-11-05" should be written as "5 Nov".`;
+You can only READ data: never offer to add, edit or delete anything. Be short and clear (under 120 words). No markdown headings, no asterisks, no JSON. timeSpent is in seconds — convert to minutes. Dates like "2026-11-05" should be written as "5 Nov".
+
+Emojis — pick them from the situation in the data (2-4 per answer, never random):
+- Start with ONE emoji that matches the overall result: 🎉 all done / 100%, 💪 good progress (50-99%), 😕 or 🙂 low progress (<50%) with encouragement, 🤔 no data found, 🔥 streaks, 📊 numbers / percentages, 📅 dates / schedules, 🏆 challenges or rewards.
+- List lines start with a status emoji instead of a plain bullet: ✅ done / completed item, ⏳ pending / not done item, ❌ missed day, 📌 neutral item.
+- End with at most one short motivating line with a fitting emoji (🚀, 🌱, ⭐) only when it adds value.`;
 
   return askGemini(prompt, fallback);
 }
 
+// ---- Guarantee every reply opens with an emoji (Gemini sometimes skips it, esp. for small talk) ----
+const LEADING_EMOJI = /^\s*(\p{Extended_Pictographic}|\p{Regional_Indicator})/u;
+function withEmoji(text, emoji) {
+  const s = String(text || '').trim();
+  return LEADING_EMOJI.test(s) ? s : `${emoji} ${s}`;
+}
+// Pick an emoji for messages that don't need data (greetings, thanks, etc.)
+function smallTalkEmoji(message) {
+  const m = message.toLowerCase();
+  if (/\b(hi+|hello|hey|hlo|helo|namaste|namaskar|salaam|good\s*(morning|afternoon|evening|night))\b|नमस्ते|हेलो/.test(m)) return '👋';
+  if (/\b(thanks?|thank\s*you|thx|shukriya|dhanyavaad|dhanyawad)\b|धन्यवाद|शुक्रिया/.test(m)) return '😊';
+  if (/\b(bye|good\s*bye|see\s*you|tata|alvida)\b/.test(m)) return '👋';
+  if (/\b(how are you|kaise ho|kaisa hai|kya haal)\b/.test(m)) return '😄';
+  if (/\b(tip|advice|suggest|motivat|help|kaise|how to)\b/.test(m)) return '💡';
+  return '🙂';
+}
+
 export async function chat({ userId, name, language, message, history }) {
   if (!isGeminiConfigured()) {
-    return { answer: 'Chatbot ke liye GEMINI_API_KEY set karna zaroori hai (Backend/.env).', query: null };
+    return { answer: '⚠️ Chatbot ke liye GEMINI_API_KEY set karna zaroori hai (Backend/.env).', query: null };
   }
 
   const plan = await planQuery({ message, history, language });
   if (!plan) {
-    return { answer: 'Sorry, abhi samajh nahi paya ya AI limit khatam ho gayi. Thoda alag tarike se poochho ya baad me try karo.', query: null };
+    return { answer: '😅 Sorry, abhi samajh nahi paya ya AI limit khatam ho gayi. Thoda alag tarike se poochho ya baad me try karo.', query: null };
   }
 
   if (!plan.needsData) {
-    return { answer: String(plan.reply || 'Main aapke tasks, habits, reports aur challenges ke baare me bata sakta hoon. Kuch poochho!'), query: null };
+    const reply = String(plan.reply || 'Main aapke tasks, habits, reports aur challenges ke baare me bata sakta hoon. Kuch poochho!');
+    return { answer: withEmoji(reply, smallTalkEmoji(message)), query: null };
   }
 
   const query = {
@@ -238,12 +265,13 @@ export async function chat({ userId, name, language, message, history }) {
   } catch (err) {
     if (err instanceof UnsafeQueryError) {
       console.warn('Chatbot rejected query:', err.message, JSON.stringify(plan).slice(0, 300));
-      return { answer: 'Ye sawaal main safely data me convert nahi kar paya. Thoda simple tarike se poochho, jaise "aaj ke pending tasks dikhao".', query };
+      return { answer: '🙏 Ye sawaal main safely data me convert nahi kar paya. Thoda simple tarike se poochho, jaise "aaj ke pending tasks dikhao".', query };
     }
     console.error('Chatbot query failed:', err.message);
-    return { answer: 'Data laate waqt error aa gaya. Sawaal thoda badal kar poochho.', query };
+    return { answer: '⚠️ Data laate waqt error aa gaya. Sawaal thoda badal kar poochho.', query };
   }
 
   const answer = await writeAnswer({ message, plan, rows, name, language });
-  return { answer, query, resultCount: Array.isArray(rows) ? rows.length : 1 };
+  const empty = Array.isArray(rows) ? rows.length === 0 : rows?.count === 0;
+  return { answer: withEmoji(answer, empty ? '🤔' : '📊'), query, resultCount: Array.isArray(rows) ? rows.length : 1 };
 }
