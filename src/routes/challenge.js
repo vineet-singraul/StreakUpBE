@@ -6,8 +6,8 @@ const router = Router();
 
 const POINTS_PER_TICK = 10;
 const PERFECT_DAY_BONUS = 20;
-const MIN_DAYS = 10;
-const MAX_DAYS = 90;
+const MIN_DAYS = 9;
+const MAX_DAYS = 145;
 const MAX_RUNNING = 10;
 
 // Day number of `date` inside the challenge (1-based)

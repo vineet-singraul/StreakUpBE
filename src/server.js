@@ -69,6 +69,17 @@ app.use('/api/location', withUser, locationRoutes);
 app.use('/api/admin/location-tracker', requireAuth, requireAdmin, locationTrackerRoutes);
 app.use('/api/admin', requireAuth, requireAdmin, adminRoutes);
 
+// QR code target: https://<server>/install -> the web app's install page.
+// The web app's address is APP_URL, or else the first public https origin in CLIENT_URL.
+function frontendUrl() {
+  if (process.env.APP_URL) return process.env.APP_URL.replace(/\/$/, '');
+  return allowedOrigins.find((o) => o.startsWith('https://') && !o.includes('localhost')) || allowedOrigins[0];
+}
+app.get(['/', '/app', '/install'], (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.redirect(302, `${frontendUrl()}/install`);
+});
+
 app.use((req, res) => res.status(404).json({ message: 'Route not found' }));
 
 // Express 5 forwards async errors here
