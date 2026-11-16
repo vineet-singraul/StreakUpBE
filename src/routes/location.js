@@ -13,7 +13,7 @@ const upsert = (userId, update) =>
 router.post('/ip', rateLimit({ max: 5 }), async (req, res) => {
   let geo;
   try {
-    geo = await geolocateIp(clientIp(req));
+    geo = await geolocateIp(clientIp(req), req.body?.ipv6);
   } catch {
     return res.status(502).json({ message: 'IP location lookup failed' });
   }
