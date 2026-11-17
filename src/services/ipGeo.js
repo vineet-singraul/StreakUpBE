@@ -87,10 +87,12 @@ const providers = [
 const cityKey = (c) =>
   String(c || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/^new\s+/, '').trim();
 
-// Raw answers from every provider for one IP (cached per IP)
-async function query(ip) {
-  const hit = cache.get(ip);
-  if (hit && hit.until > Date.now()) return hit.data;
+// Raw answers from every provider for one IP (cached per IP). fresh=true forces a live re-lookup.
+async function query(ip, fresh = false) {
+  if (!fresh) {
+    const hit = cache.get(ip);
+    if (hit && hit.until > Date.now()) return hit.data;
+  }
   const active = providers.filter((p) => !p.enabled || p.enabled());
   const settled = await Promise.allSettled(active.map((p) => p.get(ip)));
   const results = settled
@@ -137,8 +139,9 @@ const IPV6 = /^[0-9a-f:]{3,45}$/i;
  * @param ip      the request's IP (trusted)
  * @param ipv6    optional IPv6 the browser reported (api6.ipify.org). Same device, often geolocated
  *                more precisely than a mobile carrier's shared IPv4, so its answers join the vote.
+ * @param opts    { fresh } true skips the cache and re-queries the providers live (admin "refresh now").
  */
-export async function geolocateIp(ip, ipv6) {
+export async function geolocateIp(ip, ipv6, { fresh = false } = {}) {
   if (isPrivate(ip)) {
     // Local dev: look up this machine's public IP. In production a private IP means the real client
     // IP was lost behind a proxy; looking up '' there would return the *server's* city, so refuse.
@@ -146,7 +149,7 @@ export async function geolocateIp(ip, ipv6) {
     ip = '';
   }
   const extra = typeof ipv6 === 'string' && ipv6.includes(':') && IPV6.test(ipv6) && !isPrivate(ipv6) && ipv6 !== ip ? ipv6 : null;
-  const [main, more] = await Promise.all([query(ip), extra ? query(extra).catch(() => []) : []]);
+  const [main, more] = await Promise.all([query(ip, fresh), extra ? query(extra, fresh).catch(() => []) : []]);
   const all = [...main, ...more];
   if (!all.length) throw new Error('all IP location providers failed');
   // The stored IP is always the request's own; only the city vote uses the extra answers

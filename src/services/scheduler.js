@@ -8,6 +8,8 @@ import { sendPush } from './push.js';
 import { notificationLinesBatch } from './gemini.js';
 import { templateLine } from './notifyTemplates.js';
 import { todayStr, yesterdayStr, prettyDate, addDays } from '../utils/date.js';
+import LocationConsent from '../models/LocationConsent.js';
+import { geolocateIp } from './ipGeo.js';
 
 const TZ = () => process.env.APP_TIMEZONE || 'Asia/Kolkata';
 const istHour = () => Number(new Intl.DateTimeFormat('en-GB', { timeZone: TZ(), hour: '2-digit', hourCycle: 'h23' }).format(new Date()));
@@ -95,6 +97,35 @@ export async function runReminders(onlyUserId = null) {
   return stats;
 }
 
+/** Re-geolocate every user's last-known IP with the current (multi-provider) lookup.
+ *  Corrects cities that older/single-provider lookups got wrong (e.g. Delhi -> Bhopal) and refreshes
+ *  the ISP/timezone details. It does NOT fetch a new *current* location: the stored IP only changes
+ *  when the user next opens the app, so lastActiveAt (when they were really seen) is left untouched. */
+export async function refreshStoredLocations({ fresh = false } = {}) {
+  const started = Date.now();
+  const docs = await LocationConsent.find({ 'lastIp.ip': { $exists: true } }).select('user lastIp').lean();
+  let updated = 0;
+  let changed = 0;
+  await mapLimit(docs, 5, async (doc) => {
+    const old = doc.lastIp || {};
+    if (!old.ip) return;
+    let geo;
+    try {
+      geo = await geolocateIp(old.ip, undefined, { fresh });
+    } catch {
+      return; // provider down / unusable IP: keep the old snapshot
+    }
+    // Refresh the geo details only; keep the original IP and its capture time
+    await LocationConsent.updateOne({ user: doc.user }, { $set: { lastIp: { ...old, ...geo, ip: old.ip, at: old.at } } });
+    updated += 1;
+    if (geo.city && geo.city !== old.city) changed += 1;
+  });
+  const info = { at: new Date().toISOString(), checked: docs.length, updated, cityChanged: changed, seconds: Math.round((Date.now() - started) / 1000) };
+  schedulerInfo.lastLocationRefresh = info;
+  console.log('[location-refresh]', JSON.stringify(info));
+  return info;
+}
+
 /** 12 AM: AI report for everyone who had tasks (email + push), a push nudge for the rest, then cleanup.
  *  onlyUserId runs it for one account (manual test) and skips the cleanup. */
 export async function runMidnightReports(date = yesterdayStr(), onlyUserId = null) {
@@ -131,6 +162,9 @@ export async function runMidnightReports(date = yesterdayStr(), onlyUserId = nul
   });
 
   if (onlyUserId) return { date, reports, mailed };
+
+  // Refresh every user's last-known IP location with the current (multi-provider) lookup
+  await refreshStoredLocations().catch((err) => console.error('[location-refresh] failed:', err.message));
 
   // Free MongoDB is 512 MB: keep recent history only (charts use the last 30 days)
   const taskDays = Number(process.env.TASK_RETENTION_DAYS) || 180;

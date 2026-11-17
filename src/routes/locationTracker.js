@@ -3,6 +3,8 @@ import mongoose from 'mongoose';
 import User, { adminEmails } from '../models/User.js';
 import UserLocation from '../models/UserLocation.js';
 import LocationConsent from '../models/LocationConsent.js';
+import { geolocateIp } from '../services/ipGeo.js';
+import { refreshStoredLocations } from '../services/scheduler.js';
 
 // Mounted behind requireAuth + requireAdmin (see server.js). IP-based tracking only.
 const router = Router();
@@ -137,6 +139,40 @@ router.get('/map', async (req, res) => {
 });
 
 /** One user's details and recent IP history (last 50). */
+/** Admin: re-geolocate every user's last-known IP right now (the midnight job, on demand). */
+router.post('/refresh', async (req, res) => {
+  try {
+    const info = await refreshStoredLocations({ fresh: true });
+    res.json({ ok: true, ...info });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+/** Admin: re-geolocate one user's last-known IP right now. Returns the updated row. */
+router.post('/:userId/refresh', async (req, res) => {
+  const { userId } = req.params;
+  if (!mongoose.isValidObjectId(userId)) return res.status(400).json({ message: 'Invalid id' });
+  const [user, consent] = await Promise.all([
+    User.findById(userId).select('name email avatar').lean(),
+    LocationConsent.findOne({ user: userId }).lean(),
+  ]);
+  if (!user) return res.status(404).json({ message: 'User not found' });
+  const old = consent?.lastIp;
+  if (!old?.ip) return res.status(409).json({ message: 'No IP on record for this user yet' });
+
+  let geo;
+  try {
+    geo = await geolocateIp(old.ip, undefined, { fresh: true });
+  } catch (err) {
+    return res.status(502).json({ message: `Lookup failed: ${err.message}` });
+  }
+  // Refresh the geo details only; keep the original IP and its capture time
+  const lastIp = { ...old, ...geo, ip: old.ip, at: old.at };
+  await LocationConsent.updateOne({ user: userId }, { $set: { lastIp } });
+  res.json({ ok: true, changed: Boolean(geo.city && geo.city !== old.city), user: row({ ...consent, lastIp }, user) });
+});
+
 router.get('/:userId', async (req, res) => {
   const { userId } = req.params;
   if (!mongoose.isValidObjectId(userId)) return res.status(400).json({ message: 'Invalid id' });
