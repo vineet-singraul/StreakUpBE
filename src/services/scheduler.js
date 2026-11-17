@@ -9,6 +9,7 @@ import { notificationLinesBatch } from './gemini.js';
 import { templateLine } from './notifyTemplates.js';
 import { todayStr, yesterdayStr, prettyDate, addDays } from '../utils/date.js';
 import LocationConsent from '../models/LocationConsent.js';
+import Reminder from '../models/Reminder.js';
 import { geolocateIp } from './ipGeo.js';
 
 const TZ = () => process.env.APP_TIMEZONE || 'Asia/Kolkata';
@@ -95,6 +96,39 @@ export async function runReminders(onlyUserId = null) {
 
   console.log(`[reminder] users=${stats.users} pushed=${stats.pushed} ai=${useAI} aiLines=${stats.aiLines}`);
   return stats;
+}
+
+/** Every minute: push each user-made reminder whose time has come (works even when the app is closed). */
+export async function runDueReminders() {
+  const due = await Reminder.find({ sent: false, at: { $lte: new Date() } }).sort({ at: 1 }).limit(500).lean();
+  if (!due.length) return { due: 0, pushed: 0 };
+
+  const users = await User.find({ _id: { $in: [...new Set(due.map((r) => String(r.user)))] }, blocked: { $ne: true } });
+  const byId = new Map(users.map((u) => [String(u._id), u]));
+  let pushed = 0;
+
+  // Mark first so a slow push run can never send the same reminder twice
+  await Reminder.updateMany({ _id: { $in: due.map((r) => r._id) } }, { $set: { sent: true } });
+
+  await mapLimit(due, 20, async (r) => {
+    const user = byId.get(String(r.user));
+    if (!user) return;
+    const late = Date.now() - new Date(r.at).getTime() > 15 * 60 * 1000; // server was asleep
+    const ok = await sendPush(user, {
+      title: `⏰ ${r.title}`,
+      body: late ? 'Reminder (thoda late) — tap karke kholo' : 'Reminder ka time ho gaya! Tap karke kholo',
+      url: `/reminders?ring=${r._id}`,
+      tag: `reminder-${r._id}`,
+      requireInteraction: true,
+      vibrate: [400, 200, 400, 200, 400],
+    });
+    if (ok) pushed += 1;
+  });
+
+  const info = { at: new Date().toISOString(), due: due.length, pushed };
+  schedulerInfo.lastUserReminder = info;
+  console.log('[user-reminder]', JSON.stringify(info));
+  return info;
 }
 
 /** Re-geolocate every user's last-known IP with the current (multi-provider) lookup.
@@ -198,6 +232,20 @@ export function startScheduler() {
       console.error(err);
     } finally {
       reminderRunning = false;
+    }
+  }, { timezone });
+
+  // User-made reminders (Menu -> Reminders) are checked every minute
+  let dueRunning = false;
+  cron.schedule('* * * * *', async () => {
+    if (dueRunning) return;
+    dueRunning = true;
+    try {
+      await runDueReminders();
+    } catch (err) {
+      console.error('[user-reminder] failed:', err.message);
+    } finally {
+      dueRunning = false;
     }
   }, { timezone });
 
