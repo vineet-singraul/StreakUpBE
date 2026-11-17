@@ -21,6 +21,7 @@ import locationTrackerRoutes from './routes/locationTracker.js';
 import gamificationRoutes from './routes/gamification.js';
 import chatRoutes from './routes/chat.js';
 import reminderRoutes from './routes/reminders.js';
+import { reminderActionHandler } from './services/reminderActions.js';
 import { startScheduler, schedulerInfo } from './services/scheduler.js';
 import { isGeminiConfigured, geminiUsage } from './services/gemini.js';
 import { checkMail, mailStatus } from './services/mailer.js';
@@ -66,6 +67,7 @@ app.use('/api/notifications', withUser, notificationRoutes);
 app.use('/api/challenge', withUser, challengeRoutes);
 app.use('/api/gamification', withUser, gamificationRoutes);
 app.use('/api/chat', withUser, chatRoutes);
+app.post('/api/reminder-action/:id', reminderActionHandler); // Stop / Snooze buttons on the notification (signed key, no login)
 app.use('/api/reminders', withUser, reminderRoutes);
 app.use('/api/location', withUser, locationRoutes);
 app.use('/api/admin/location-tracker', requireAuth, requireAdmin, locationTrackerRoutes);

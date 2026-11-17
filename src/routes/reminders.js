@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import Reminder, { TONES } from '../models/Reminder.js';
+import { stopReminder } from '../services/reminderActions.js';
 
 const router = Router();
 const MAX_PENDING = 100;
@@ -49,10 +50,16 @@ router.post('/', async (req, res) => {
 router.patch('/:id', async (req, res) => {
   const { data, error } = parse(req.body, true);
   if (error) return res.status(400).json({ message: error });
-  if (data.at) data.sent = false;
+  if (data.at) Object.assign(data, { sent: false, rings: 0, done: false });
   const reminder = await Reminder.findOneAndUpdate({ _id: req.params.id, user: req.userId }, data, { returnDocument: 'after', lean: true });
   if (!reminder) return res.status(404).json({ message: 'Reminder nahi mila' });
   res.json({ reminder });
+});
+
+// "Stop" on the in-app alarm screen: no more re-ring pushes
+router.post('/:id/stop', async (req, res) => {
+  await stopReminder({ _id: req.params.id, user: req.userId });
+  res.json({ ok: true });
 });
 
 router.delete('/:id', async (req, res) => {

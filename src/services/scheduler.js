@@ -10,6 +10,7 @@ import { templateLine } from './notifyTemplates.js';
 import { todayStr, yesterdayStr, prettyDate, addDays } from '../utils/date.js';
 import LocationConsent from '../models/LocationConsent.js';
 import Reminder from '../models/Reminder.js';
+import { actionUrl } from './reminderActions.js';
 import { geolocateIp } from './ipGeo.js';
 
 const TZ = () => process.env.APP_TIMEZONE || 'Asia/Kolkata';
@@ -99,28 +100,51 @@ export async function runReminders(onlyUserId = null) {
 }
 
 /** Every minute: push each user-made reminder whose time has come (works even when the app is closed). */
+// Like a phone alarm on the lock screen: the notification is re-sent (sound + vibration) every minute
+// until the user taps Stop / Snooze or it has rung RING_TIMES times (~5 minutes).
+const RING_TIMES = 5;
+
 export async function runDueReminders() {
-  const due = await Reminder.find({ sent: false, at: { $lte: new Date() } }).sort({ at: 1 }).limit(500).lean();
+  const now = Date.now();
+  const due = await Reminder.find({
+    done: { $ne: true },
+    at: { $lte: new Date(now) },
+    $or: [{ sent: false }, { rings: { $gte: 1 } }], // older reminders without `rings` never re-ring
+  }).sort({ at: 1 }).limit(500).lean();
   if (!due.length) return { due: 0, pushed: 0 };
 
   const users = await User.find({ _id: { $in: [...new Set(due.map((r) => String(r.user)))] }, blocked: { $ne: true } });
   const byId = new Map(users.map((u) => [String(u._id), u]));
   let pushed = 0;
 
-  // Mark first so a slow push run can never send the same reminder twice
-  await Reminder.updateMany({ _id: { $in: due.map((r) => r._id) } }, { $set: { sent: true } });
+  // Count the ring first so a slow push run can never double-send. A reminder found >10 min late
+  // (server was asleep) rings once only.
+  const plan = due.map((r) => {
+    const ring = (r.rings || 0) + 1;
+    const late = !r.rings && now - new Date(r.at).getTime() > 10 * 60 * 1000;
+    return { r, ring, late, last: late || ring >= RING_TIMES };
+  });
+  await Reminder.bulkWrite(plan.map(({ r, ring, last }) => ({
+    updateOne: { filter: { _id: r._id }, update: { $set: { sent: true, rings: ring, done: last } } },
+  })));
 
-  await mapLimit(due, 20, async (r) => {
+  await mapLimit(plan, 20, async ({ r, ring, late }) => {
     const user = byId.get(String(r.user));
     if (!user) return;
-    const late = Date.now() - new Date(r.at).getTime() > 15 * 60 * 1000; // server was asleep
     const ok = await sendPush(user, {
       title: `⏰ ${r.title}`,
-      body: late ? 'Reminder (thoda late) — tap karke kholo' : 'Reminder ka time ho gaya! Tap karke kholo',
+      body: late
+        ? 'Reminder (thoda late) — tap karke kholo'
+        : ring === 1 ? 'Reminder ka time ho gaya!' : `Abhi bhi baj raha hai (${ring}/${RING_TIMES}) — Stop dabao`,
       url: `/reminders?ring=${r._id}`,
       tag: `reminder-${r._id}`,
       requireInteraction: true,
-      vibrate: [400, 200, 400, 200, 400],
+      vibrate: [800, 300, 800, 300, 800, 300, 800],
+      actionUrl: actionUrl(r._id),
+      actions: [
+        { action: 'stop', title: '⏹ Stop' },
+        { action: 'snooze', title: '😴 5 min baad' },
+      ],
     });
     if (ok) pushed += 1;
   });

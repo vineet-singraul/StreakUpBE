@@ -11,12 +11,14 @@ const reminderSchema = new mongoose.Schema(
     at: { type: Date, required: true },
     tone: { type: String, enum: TONES, default: 'chime' },
     speak: { type: Boolean, default: true }, // read the title aloud (text-to-speech)
-    sent: { type: Boolean, default: false }, // push already sent by the scheduler
+    sent: { type: Boolean, default: false }, // first push already sent by the scheduler
+    rings: { type: Number, default: 0 }, // pushes sent so far (it re-rings every minute, like an alarm)
+    done: { type: Boolean, default: false }, // stopped by the user, or rang the maximum times
   },
   { timestamps: true },
 );
 
 // The every-minute scheduler looks up "not sent and due"
-reminderSchema.index({ sent: 1, at: 1 });
+reminderSchema.index({ done: 1, at: 1 });
 
 export default mongoose.model('Reminder', reminderSchema);
